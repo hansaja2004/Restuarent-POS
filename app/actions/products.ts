@@ -24,7 +24,7 @@ export async function createProduct(formData: FormData) {
 
   const name = formData.get('name') as string;
   const price = formData.get('price') as string;
-  const categoryId = parseInt(formData.get('categoryId') as string, 10);
+  const categoryId = Number.parseInt(formData.get('categoryId') as string, 10);
   const imageUrl = formData.get('imageUrl') as string;
 
   if (!name || !price || !categoryId) return { error: 'Missing required fields' };
@@ -75,5 +75,21 @@ export async function createCategory(formData: FormData) {
   } catch (error) {
     console.error(error);
     return { error: 'Failed to create category' };
+  }
+}
+
+export async function deleteCategory(id: number) {
+  const session = await getSession();
+  if (session?.role !== 'admin') return { error: 'Unauthorized' };
+
+  try {
+    await db.delete(categories).where(eq(categories.id, id));
+    revalidatePath('/');
+    revalidatePath('/admin/products');
+    revalidatePath('/menu');
+    return { success: true };
+  } catch (error) {
+    console.error(error);
+    return { error: 'Failed to delete category' };
   }
 }

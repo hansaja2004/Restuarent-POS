@@ -1,6 +1,5 @@
 import Sidebar from '@/components/sidebar'
-import OrderQueues from '@/components/order-queues'
-import PosShell from '@/components/pos-shell'
+import MainPos from '@/components/main-pos'
 import { getCategories, getProducts } from './actions/products'
 import { getRecentOrders } from './actions/orders'
 import { getSession } from '@/lib/auth'
@@ -21,16 +20,7 @@ export default async function Page() {
       {/* Sidebar */}
       <Sidebar />
 
-      {/* Main Content */}
-      <div className="flex-1 flex gap-6 p-6 overflow-hidden">
-        {/* Center Panel */}
-        <div className="flex-1 flex flex-col gap-6 overflow-y-auto">
-          <OrderQueues orders={recentOrders} />
-          <div className="flex gap-6">
-            <PosShell products={products} categories={categories} />
-          </div>
-        </div>
-      </div>
+      <MainPos products={products} categories={categories} recentOrders={recentOrders} />
     </div>
   )
 }

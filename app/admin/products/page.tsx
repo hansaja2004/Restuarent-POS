@@ -17,10 +17,13 @@ export default async function ProductsPage() {
           {/* Add Category Form */}
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
             <h2 className="text-lg font-bold text-gray-900 mb-4">Add Category</h2>
-            <form action={createCategory} className="space-y-4">
+            <form action={async (formData) => {
+              'use server';
+              await createCategory(formData);
+            }} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
-                <input name="name" type="text" required className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none" />
+                <label htmlFor="admin-category-name" className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <input id="admin-category-name" name="name" type="text" required className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none" />
               </div>
               <button type="submit" className="w-full bg-teal-600 text-white py-2 rounded-lg font-medium hover:bg-teal-700 transition-colors">
                 Add Category
@@ -31,18 +34,21 @@ export default async function ProductsPage() {
           {/* Add Product Form */}
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
             <h2 className="text-lg font-bold text-gray-900 mb-4">Add Product</h2>
-            <form action={createProduct} className="space-y-4">
+            <form action={async (formData) => {
+              'use server';
+              await createProduct(formData);
+            }} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
-                <input name="name" type="text" required className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none" />
+                <label htmlFor="admin-product-name" className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <input id="admin-product-name" name="name" type="text" required className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Price</label>
-                <input name="price" type="number" step="0.01" required className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none" />
+                <label htmlFor="admin-product-price" className="block text-sm font-medium text-gray-700 mb-1">Price</label>
+                <input id="admin-product-price" name="price" type="number" step="0.01" required className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-                <select name="categoryId" required className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none">
+                <label htmlFor="admin-product-category" className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                <select id="admin-product-category" name="categoryId" required className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none">
                   <option value="">Select a category</option>
                   {categories.map(c => (
                     <option key={c.id} value={c.id}>{c.name}</option>
@@ -50,8 +56,8 @@ export default async function ProductsPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Image URL (optional)</label>
-                <input name="imageUrl" type="text" placeholder="/spicy-shrimp-rice.png" className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none" />
+                <label htmlFor="admin-product-image" className="block text-sm font-medium text-gray-700 mb-1">Image URL (optional)</label>
+                <input id="admin-product-image" name="imageUrl" type="text" placeholder="/spicy-shrimp-rice.png" className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none" />
               </div>
               <button type="submit" className="w-full bg-teal-600 text-white py-2 rounded-lg font-medium hover:bg-teal-700 transition-colors">
                 Add Product
@@ -80,7 +86,7 @@ export default async function ProductsPage() {
                   {products.map(p => (
                     <tr key={p.id} className="border-b">
                       <td className="px-6 py-4 font-medium text-gray-900">{p.name}</td>
-                      <td className="px-6 py-4">${p.price}</td>
+                      <td className="px-6 py-4">LKR {p.price}</td>
                       <td className="px-6 py-4">{p.categoryId}</td>
                       <td className="px-6 py-4">
                         <form action={async () => {

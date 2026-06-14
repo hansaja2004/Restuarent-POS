@@ -6,9 +6,9 @@ import { LayoutDashboard, Package, LogOut } from 'lucide-react';
 
 export default async function AdminLayout({
   children,
-}: {
+}: Readonly<{
   children: React.ReactNode;
-}) {
+}>) {
   const session = await getSession();
   if (session?.role !== 'admin') {
     redirect('/');

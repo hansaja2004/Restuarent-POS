@@ -1,22 +1,18 @@
 'use client'
 
 import { useMemo, useState, useTransition } from 'react'
+import OrderQueues from './order-queues'
+import CartPanel, { type CartItem } from './cart-panel'
+import ProductList, { type Product } from './product-list'
 import { createOrder } from '@/app/actions/orders'
-import CartPanel, { type CartItem } from '@/components/cart-panel'
-import ProductList, { type Product } from '@/components/product-list'
 
-type Category = {
-  id: number
-  name: string
+type Props = {
+  products: Product[]
+  categories: { id: number; name: string }[]
+  recentOrders: any[]
 }
 
-export default function PosShell({
-  products,
-  categories,
-}: Readonly<{
-  products: Product[]
-  categories: Category[]
-}>) {
+export default function MainPos({ products, categories, recentOrders }: Props) {
   const [cartItems, setCartItems] = useState<CartItem[]>([])
   const [orderMessage, setOrderMessage] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
@@ -89,13 +85,18 @@ export default function PosShell({
   }
 
   return (
-    <>
-      <div className="flex-1 min-w-0 overflow-y-auto">
-        <ProductList
-          initialProducts={products}
-          categories={categories}
-          onAddToCart={handleAddToCart}
-        />
+    <div className="flex-1 flex gap-6 p-6 overflow-hidden">
+      <div className="flex-1 flex flex-col gap-6 overflow-y-auto">
+        <OrderQueues orders={recentOrders} />
+        <div className="flex-1 flex gap-6 overflow-hidden">
+          <div className="flex-1 min-w-0 overflow-y-auto">
+            <ProductList
+              initialProducts={products}
+              categories={categories}
+              onAddToCart={handleAddToCart}
+            />
+          </div>
+        </div>
       </div>
 
       <div className="w-96 shrink-0 h-full">
@@ -111,6 +112,6 @@ export default function PosShell({
           onCheckout={handleCheckout}
         />
       </div>
-    </>
+    </div>
   )
 }

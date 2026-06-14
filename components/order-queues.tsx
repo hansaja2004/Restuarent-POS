@@ -56,7 +56,7 @@ export default function OrderQueues({ orders = [] }: { orders?: OrderQueueItem[]
               </div>
 
               <p className="text-sm font-medium text-gray-900 mb-2">
-                ${Number(order.totalAmount).toFixed(2)}
+                LKR {Number(order.totalAmount).toFixed(2)}
               </p>
               <p className="text-xs text-gray-500 mb-4">{createdAt}</p>
 

@@ -15,11 +15,11 @@ export default function ProductList({
   initialProducts = [],
   categories = [],
   onAddToCart,
-}: {
+}: Readonly<{
   initialProducts?: Product[]
   categories?: { id: number; name: string }[]
   onAddToCart?: (product: Product, quantity: number) => void
-}) {
+}>) {
   const [quantities, setQuantities] = useState<{ [key: number]: number }>({})
   const [searchQuery, setSearchQuery] = useState('')
   const [activeCategory, setActiveCategory] = useState<number | null>(categories[0]?.id || null)
@@ -32,29 +32,32 @@ export default function ProductList({
   })
 
   const handleQuantityChange = (id: number, delta: number) => {
+    const newQuantity = Math.max(0, (quantities[id] || 0) + delta)
     setQuantities((prev) => ({
       ...prev,
-      [id]: Math.max(0, (prev[id] || 0) + delta),
+      [id]: newQuantity,
     }))
-  }
-
-  const handleAddToCart = (product: Product) => {
-    const quantity = quantities[product.id] || 1
-
-    onAddToCart?.(product, quantity)
-    setQuantities((prev) => ({ ...prev, [product.id]: 0 }))
+    
+    // Auto-add to cart when quantity becomes > 0
+    if (newQuantity > 0 && ((quantities[id] || 0) === 0)) {
+      const product = initialProducts.find(p => p.id === id)
+      if (product) {
+        onAddToCart?.(product, newQuantity)
+        setQuantities((prev) => ({ ...prev, [id]: 0 }))
+      }
+    }
   }
 
   return (
     <div className="bg-white rounded-lg p-6 border border-gray-200">
       <div className="flex items-center justify-between gap-4 mb-6">
-        <h2 className="text-lg font-semibold text-gray-900">Product Lists</h2>
+        <h2 className="text-lg font-semibold text-gray-900">Lists</h2>
         <div className="flex items-center gap-4">
           <button
             onClick={() => setActiveCategory(null)}
             className="px-4 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50"
           >
-            All products
+            All items
           </button>
           <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 border border-gray-300">
             <Search size={18} className="text-gray-500" />
@@ -101,10 +104,10 @@ export default function ProductList({
 
             <div className="p-4">
               <p className="text-sm font-semibold text-gray-900">{product.name}</p>
-              <p className="text-xs text-gray-500 mt-1">${product.price} / serving</p>
+              <p className="text-xs text-gray-500 mt-1">LKR {product.price} / serving</p>
 
-              <div className="mt-4 flex items-center gap-2">
-                <div className="flex items-center border border-gray-300 rounded-lg">
+            <div className="mt-4 flex items-center gap-2">
+                <div className="flex items-center border border-gray-300 rounded-lg flex-1 justify-center">
                   <button
                     onClick={() => handleQuantityChange(product.id, -1)}
                     className="p-1 text-gray-500 hover:text-gray-700"
@@ -123,19 +126,13 @@ export default function ProductList({
                     <Plus size={16} />
                   </button>
                 </div>
-                <button
-                  onClick={() => handleAddToCart(product)}
-                  className="flex-1 px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-                >
-                  Add to cart
-                </button>
               </div>
             </div>
           </div>
         ))}
         {products.length === 0 && (
           <div className="col-span-full rounded-lg border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500">
-            No products found.
+            No items found.
           </div>
         )}
       </div>
