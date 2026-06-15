@@ -1,4 +1,5 @@
 import { getCategories, getProducts, createProduct, createCategory, deleteProduct } from '@/app/actions/products';
+import AdminProductForm from '@/components/admin-product-form';
 
 export default async function ProductsPage() {
   const categories = await getCategories();
@@ -34,35 +35,7 @@ export default async function ProductsPage() {
           {/* Add Product Form */}
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
             <h2 className="text-lg font-bold text-gray-900 mb-4">Add Product</h2>
-            <form action={async (formData) => {
-              'use server';
-              await createProduct(formData);
-            }} className="space-y-4">
-              <div>
-                <label htmlFor="admin-product-name" className="block text-sm font-medium text-gray-700 mb-1">Name</label>
-                <input id="admin-product-name" name="name" type="text" required className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none" />
-              </div>
-              <div>
-                <label htmlFor="admin-product-price" className="block text-sm font-medium text-gray-700 mb-1">Price</label>
-                <input id="admin-product-price" name="price" type="number" step="0.01" required className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none" />
-              </div>
-              <div>
-                <label htmlFor="admin-product-category" className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-                <select id="admin-product-category" name="categoryId" required className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none">
-                  <option value="">Select a category</option>
-                  {categories.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label htmlFor="admin-product-image" className="block text-sm font-medium text-gray-700 mb-1">Image URL (optional)</label>
-                <input id="admin-product-image" name="imageUrl" type="text" placeholder="/spicy-shrimp-rice.png" className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none" />
-              </div>
-              <button type="submit" className="w-full bg-teal-600 text-white py-2 rounded-lg font-medium hover:bg-teal-700 transition-colors">
-                Add Product
-              </button>
-            </form>
+            <AdminProductForm categories={categories} />
           </div>
         </div>
 
@@ -77,7 +50,7 @@ export default async function ProductsPage() {
                 <thead className="text-xs text-gray-700 uppercase bg-gray-50">
                   <tr>
                     <th className="px-6 py-3">Product</th>
-                    <th className="px-6 py-3">Price</th>
+                    <th className="px-6 py-3">Size Prices</th>
                     <th className="px-6 py-3">Category ID</th>
                     <th className="px-6 py-3">Actions</th>
                   </tr>
@@ -86,7 +59,16 @@ export default async function ProductsPage() {
                   {products.map(p => (
                     <tr key={p.id} className="border-b">
                       <td className="px-6 py-4 font-medium text-gray-900">{p.name}</td>
-                      <td className="px-6 py-4">LKR {p.price}</td>
+                      <td className="px-6 py-4">
+                        <div className="flex flex-wrap gap-2">
+                          {p.smallPrice && <span className="rounded bg-gray-100 px-2 py-1 text-xs">S: LKR {p.smallPrice}</span>}
+                          {p.mediumPrice && <span className="rounded bg-gray-100 px-2 py-1 text-xs">M: LKR {p.mediumPrice}</span>}
+                          {p.largePrice && <span className="rounded bg-gray-100 px-2 py-1 text-xs">L: LKR {p.largePrice}</span>}
+                          {!p.smallPrice && !p.mediumPrice && !p.largePrice && (
+                            <span>LKR {p.price}</span>
+                          )}
+                        </div>
+                      </td>
                       <td className="px-6 py-4">{p.categoryId}</td>
                       <td className="px-6 py-4">
                         <form action={async () => {

@@ -1,14 +1,37 @@
 'use client'
 
 import { useState } from 'react'
-import { Minus, Plus, Search } from 'lucide-react'
+import { Search } from 'lucide-react'
 
 export type Product = {
   id: number
   name: string
   price: string
+  smallPrice: string | null
+  mediumPrice: string | null
+  largePrice: string | null
   categoryId: number
   imageUrl: string | null
+}
+
+export type ProductSize = 'S' | 'M' | 'L'
+
+const sizePrices: Record<ProductSize, 'smallPrice' | 'mediumPrice' | 'largePrice'> = {
+  S: 'smallPrice',
+  M: 'mediumPrice',
+  L: 'largePrice',
+}
+
+function getAvailableSizes(product: Product) {
+  const availableSizes = (Object.keys(sizePrices) as ProductSize[]).filter(
+    (size) => Boolean(product[sizePrices[size]]),
+  )
+
+  return availableSizes.length > 0 ? availableSizes : (['M'] as ProductSize[])
+}
+
+function getProductPrice(product: Product, size: ProductSize) {
+  return product[sizePrices[size]] || product.price
 }
 
 export default function ProductList({
@@ -18,10 +41,10 @@ export default function ProductList({
 }: Readonly<{
   initialProducts?: Product[]
   categories?: { id: number; name: string }[]
-  onAddToCart?: (product: Product, quantity: number) => void
+  onAddToCart?: (product: Product, quantity: number, size: ProductSize, price: string) => void
 }>) {
-  const [quantities, setQuantities] = useState<{ [key: number]: number }>({})
   const [searchQuery, setSearchQuery] = useState('')
+  const [selectedSizes, setSelectedSizes] = useState<Record<number, ProductSize>>({})
   const [activeCategory, setActiveCategory] = useState<number | null>(categories[0]?.id || null)
 
   const products = initialProducts.filter((product) => {
@@ -30,23 +53,6 @@ export default function ProductList({
 
     return matchesCategory && matchesSearch
   })
-
-  const handleQuantityChange = (id: number, delta: number) => {
-    const newQuantity = Math.max(0, (quantities[id] || 0) + delta)
-    setQuantities((prev) => ({
-      ...prev,
-      [id]: newQuantity,
-    }))
-    
-    // Auto-add to cart when quantity becomes > 0
-    if (newQuantity > 0 && ((quantities[id] || 0) === 0)) {
-      const product = initialProducts.find(p => p.id === id)
-      if (product) {
-        onAddToCart?.(product, newQuantity)
-        setQuantities((prev) => ({ ...prev, [id]: 0 }))
-      }
-    }
-  }
 
   return (
     <div className="bg-white rounded-lg p-6 border border-gray-200">
@@ -89,47 +95,77 @@ export default function ProductList({
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 lg:grid-cols-2 gap-6">
-        {products.map((product) => (
-          <div
-            key={product.id}
-            className="bg-white border border-gray-200 rounded-lg overflow-hidden hover:shadow-md transition-shadow"
-          >
-            <div className="aspect-square bg-gray-200 overflow-hidden">
-              <img
-                src={product.imageUrl || '/spicy-shrimp-rice.png'}
-                alt={product.name}
-                className="w-full h-full object-cover hover:scale-105 transition-transform"
-              />
-            </div>
+        {products.map((product) => {
+          const availableSizes = getAvailableSizes(product)
+          const selectedSize = selectedSizes[product.id] || availableSizes[0]
+          const selectedPrice = getProductPrice(product, selectedSize)
 
-            <div className="p-4">
-              <p className="text-sm font-semibold text-gray-900">{product.name}</p>
-              <p className="text-xs text-gray-500 mt-1">LKR {product.price} / serving</p>
+          return (
+            <div
+              key={product.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => onAddToCart?.(product, 1, selectedSize, selectedPrice)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return
 
-            <div className="mt-4 flex items-center gap-2">
-                <div className="flex items-center border border-gray-300 rounded-lg flex-1 justify-center">
-                  <button
-                    onClick={() => handleQuantityChange(product.id, -1)}
-                    className="p-1 text-gray-500 hover:text-gray-700"
-                    aria-label={`Decrease ${product.name}`}
-                  >
-                    <Minus size={16} />
-                  </button>
-                  <span className="px-3 py-1 text-sm font-medium text-gray-900 min-w-8 text-center">
-                    {quantities[product.id] || 0}
-                  </span>
-                  <button
-                    onClick={() => handleQuantityChange(product.id, 1)}
-                    className="p-1 text-gray-500 hover:text-gray-700"
-                    aria-label={`Increase ${product.name}`}
-                  >
-                    <Plus size={16} />
-                  </button>
+                event.preventDefault()
+                onAddToCart?.(product, 1, selectedSize, selectedPrice)
+              }}
+              className="bg-white border border-gray-200 rounded-lg overflow-hidden text-left hover:shadow-md focus:outline-none focus:ring-2 focus:ring-teal-500 transition-shadow cursor-pointer"
+            >
+              <div className="aspect-square bg-gray-200 overflow-hidden">
+                <img
+                  src={product.imageUrl || '/spicy-shrimp-rice.png'}
+                  alt={product.name}
+                  className="w-full h-full object-cover hover:scale-105 transition-transform"
+                />
+              </div>
+
+              <div className="p-4">
+                <p className="text-sm font-semibold text-gray-900">{product.name}</p>
+                <p className="text-xs text-gray-500 mt-1">LKR {selectedPrice} / serving</p>
+                <div className="mt-3 flex items-center gap-2">
+                  {availableSizes.map((size) => {
+                    const isSelected = selectedSize === size
+
+                    return (
+                      <span
+                        key={size}
+                        role="button"
+                        tabIndex={0}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          setSelectedSizes((currentSizes) => ({
+                            ...currentSizes,
+                            [product.id]: size,
+                          }))
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== 'Enter' && event.key !== ' ') return
+
+                          event.preventDefault()
+                          event.stopPropagation()
+                          setSelectedSizes((currentSizes) => ({
+                            ...currentSizes,
+                            [product.id]: size,
+                          }))
+                        }}
+                        className={`flex h-8 w-8 items-center justify-center rounded-full border text-xs font-semibold transition-colors ${
+                          isSelected
+                            ? 'border-teal-600 bg-teal-600 text-white'
+                            : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50'
+                        }`}
+                      >
+                        {size}
+                      </span>
+                    )
+                  })}
                 </div>
               </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
         {products.length === 0 && (
           <div className="col-span-full rounded-lg border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500">
             No items found.

@@ -63,10 +63,13 @@ export default function Sidebar() {
 
       {/* Settings */}
       <div className="px-2 py-2 border-t border-gray-200 space-y-2">
-        <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer">
+        <button
+          onClick={() => router.push('/settings')}
+          className="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-100 transition-colors"
+        >
           <Settings size={20} className="text-gray-600" />
           {!collapsed && <span className="text-sm text-gray-700">Settings</span>}
-        </div>
+        </button>
 
         <button
           type="button"

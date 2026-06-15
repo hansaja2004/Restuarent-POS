@@ -43,7 +43,7 @@ export async function getOrders() {
     .orderBy(desc(orders.createdAt));
 }
 
-export async function createOrder(items: { productId: number; quantity: number; price: string }[]) {
+export async function createOrder(items: { productId: number; quantity: number; price: string; size?: string }[]) {
   const session = await getSession();
   if (!session) return { error: 'Unauthorized' };
 
@@ -65,6 +65,7 @@ export async function createOrder(items: { productId: number; quantity: number; 
     const itemsToInsert = items.map(item => ({
       orderId: newOrder.id,
       productId: item.productId,
+      size: item.size,
       quantity: item.quantity,
       price: item.price,
     }));

@@ -32,7 +32,9 @@ export default async function OrdersPage() {
                     <td className="px-6 py-4">{o.status}</td>
                     <td className="px-6 py-4">{o.items}</td>
                     <td className="px-6 py-4">LKR {Number(o.totalAmount).toFixed(2)}</td>
-                    <td className="px-6 py-4">{new Date(o.createdAt).toLocaleString()}</td>
+                    <td className="px-6 py-4">
+                      {o.createdAt ? new Date(o.createdAt).toLocaleString() : 'Unknown'}
+                    </td>
                   </tr>
                 ))}
                 {orders.length === 0 && (

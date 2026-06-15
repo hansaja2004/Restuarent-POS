@@ -4,8 +4,10 @@ import { useState } from 'react'
 import { ChevronDown, Eye, Minus, Plus } from 'lucide-react'
 
 export type CartItem = {
+  id: string
   productId: number
   name: string
+  size: string
   price: number
   quantity: number
   image: string
@@ -22,7 +24,7 @@ export default function CartPanel({
   items: CartItem[]
   isSubmitting?: boolean
   orderMessage?: string | null
-  onQuantityChange: (productId: number, quantity: number) => void
+  onQuantityChange: (id: string, quantity: number) => void
   onClear: () => void
   onCheckout: () => void
 }>) {
@@ -111,7 +113,7 @@ export default function CartPanel({
 
         <div className="space-y-2">
           {items.map((item) => (
-            <div key={item.productId} className="flex gap-2 pb-2 border-b border-gray-100">
+            <div key={item.id} className="flex gap-2 pb-2 border-b border-gray-100">
               <img
                 src={item.image}
                 alt={item.name}
@@ -119,13 +121,16 @@ export default function CartPanel({
               />
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-medium text-gray-900 truncate">{item.name}</p>
+                <p className="mt-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-teal-50 text-[10px] font-semibold text-teal-700">
+                  {item.size}
+                </p>
                 <p className="text-xs font-semibold text-gray-900 mt-1">
                   LKR {item.price.toFixed(2)}
                 </p>
 
                 <div className="flex items-center gap-1 mt-1">
                   <button
-                    onClick={() => onQuantityChange(item.productId, item.quantity - 1)}
+                    onClick={() => onQuantityChange(item.id, item.quantity - 1)}
                     className="p-0 text-gray-500 hover:text-gray-700"
                     aria-label={`Decrease ${item.name}`}
                   >
@@ -135,7 +140,7 @@ export default function CartPanel({
                     {item.quantity}
                   </span>
                   <button
-                    onClick={() => onQuantityChange(item.productId, item.quantity + 1)}
+                    onClick={() => onQuantityChange(item.id, item.quantity + 1)}
                     className="p-0 text-gray-500 hover:text-gray-700"
                     aria-label={`Increase ${item.name}`}
                   >

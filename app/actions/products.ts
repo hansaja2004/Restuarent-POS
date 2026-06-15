@@ -23,9 +23,12 @@ export async function createProduct(formData: FormData) {
   if (session?.role !== 'admin') return { error: 'Unauthorized' };
 
   const name = formData.get('name') as string;
-  const price = formData.get('price') as string;
+  const smallPrice = formData.get('smallPrice') as string;
+  const mediumPrice = formData.get('mediumPrice') as string;
+  const largePrice = formData.get('largePrice') as string;
   const categoryId = Number.parseInt(formData.get('categoryId') as string, 10);
   const imageUrl = formData.get('imageUrl') as string;
+  const price = mediumPrice || smallPrice || largePrice;
 
   if (!name || !price || !categoryId) return { error: 'Missing required fields' };
 
@@ -33,6 +36,9 @@ export async function createProduct(formData: FormData) {
     await db.insert(products).values({
       name,
       price,
+      smallPrice: smallPrice || null,
+      mediumPrice: mediumPrice || null,
+      largePrice: largePrice || null,
       categoryId,
       imageUrl: imageUrl || '/spicy-shrimp-rice.png', // Default image
     });
@@ -87,9 +93,36 @@ export async function deleteCategory(id: number) {
     revalidatePath('/');
     revalidatePath('/admin/products');
     revalidatePath('/menu');
+    revalidatePath('/settings');
     return { success: true };
   } catch (error) {
     console.error(error);
     return { error: 'Failed to delete category' };
   }
 }
+
+export async function updateProduct(id: number, formData: FormData) {
+  const session = await getSession();
+  if (session?.role !== 'admin') return { error: 'Unauthorized' };
+
+  const name = formData.get('name') as string;
+  const price = formData.get('price') as string;
+  const categoryId = Number.parseInt(formData.get('categoryId') as string, 10);
+  const imageUrl = formData.get('imageUrl') as string;
+
+  if (!name || !price || !categoryId) return { error: 'Missing required fields' };
+
+  try {
+    await db
+      .update(products)
+      .set({ name, price, categoryId, imageUrl: imageUrl || undefined })
+      .where(eq(products.id, id));
+    revalidatePath('/');
+    revalidatePath('/settings');
+    return { success: true };
+  } catch (error) {
+    console.error(error);
+    return { error: 'Failed to update product' };
+  }
+}
+

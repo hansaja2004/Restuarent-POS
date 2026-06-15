@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition } from 'react'
 import { createOrder } from '@/app/actions/orders'
 import CartPanel, { type CartItem } from '@/components/cart-panel'
-import ProductList, { type Product } from '@/components/product-list'
+import ProductList, { type Product, type ProductSize } from '@/components/product-list'
 
 type Category = {
   id: number
@@ -25,16 +25,17 @@ export default function PosShell({
     return new Map(products.map((product) => [product.id, product]))
   }, [products])
 
-  const handleAddToCart = (product: Product, quantity: number) => {
+  const handleAddToCart = (product: Product, quantity: number, size: ProductSize, price: string) => {
     if (quantity < 1) return
 
     setOrderMessage(null)
     setCartItems((currentItems) => {
-      const existingItem = currentItems.find((item) => item.productId === product.id)
+      const itemKey = `${product.id}-${size}`
+      const existingItem = currentItems.find((item) => item.id === itemKey)
 
       if (existingItem) {
         return currentItems.map((item) =>
-          item.productId === product.id
+          item.id === itemKey
             ? { ...item, quantity: item.quantity + quantity }
             : item,
         )
@@ -43,9 +44,11 @@ export default function PosShell({
       return [
         ...currentItems,
         {
+          id: itemKey,
           productId: product.id,
           name: product.name,
-          price: Number(product.price),
+          size,
+          price: Number(price),
           quantity,
           image: product.imageUrl || '/spicy-shrimp-rice.png',
         },
@@ -53,11 +56,11 @@ export default function PosShell({
     })
   }
 
-  const handleQuantityChange = (productId: number, quantity: number) => {
+  const handleQuantityChange = (id: string, quantity: number) => {
     setOrderMessage(null)
     setCartItems((currentItems) =>
       currentItems
-        .map((item) => (item.productId === productId ? { ...item, quantity } : item))
+        .map((item) => (item.id === id ? { ...item, quantity } : item))
         .filter((item) => item.quantity > 0),
     )
   }
@@ -71,7 +74,8 @@ export default function PosShell({
       return {
         productId: item.productId,
         quantity: item.quantity,
-        price: product?.price ?? item.price.toFixed(2),
+        price: item.price.toFixed(2),
+        size: item.size,
       }
     })
 

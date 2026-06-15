@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition } from 'react'
 import OrderQueues from './order-queues'
 import CartPanel, { type CartItem } from './cart-panel'
-import ProductList, { type Product } from './product-list'
+import ProductList, { type Product, type ProductSize } from './product-list'
 import { createOrder } from '@/app/actions/orders'
 
 type Props = {
@@ -21,16 +21,17 @@ export default function MainPos({ products, categories, recentOrders }: Props) {
     return new Map(products.map((product) => [product.id, product]))
   }, [products])
 
-  const handleAddToCart = (product: Product, quantity: number) => {
+  const handleAddToCart = (product: Product, quantity: number, size: ProductSize, price: string) => {
     if (quantity < 1) return
 
     setOrderMessage(null)
     setCartItems((currentItems) => {
-      const existingItem = currentItems.find((item) => item.productId === product.id)
+      const itemKey = `${product.id}-${size}`
+      const existingItem = currentItems.find((item) => item.id === itemKey)
 
       if (existingItem) {
         return currentItems.map((item) =>
-          item.productId === product.id
+          item.id === itemKey
             ? { ...item, quantity: item.quantity + quantity }
             : item,
         )
@@ -39,9 +40,11 @@ export default function MainPos({ products, categories, recentOrders }: Props) {
       return [
         ...currentItems,
         {
+          id: itemKey,
           productId: product.id,
           name: product.name,
-          price: Number(product.price),
+          size,
+          price: Number(price),
           quantity,
           image: product.imageUrl || '/spicy-shrimp-rice.png',
         },
@@ -49,11 +52,11 @@ export default function MainPos({ products, categories, recentOrders }: Props) {
     })
   }
 
-  const handleQuantityChange = (productId: number, quantity: number) => {
+  const handleQuantityChange = (id: string, quantity: number) => {
     setOrderMessage(null)
     setCartItems((currentItems) =>
       currentItems
-        .map((item) => (item.productId === productId ? { ...item, quantity } : item))
+        .map((item) => (item.id === id ? { ...item, quantity } : item))
         .filter((item) => item.quantity > 0),
     )
   }
@@ -62,12 +65,11 @@ export default function MainPos({ products, categories, recentOrders }: Props) {
     if (cartItems.length === 0 || isPending) return
 
     const orderItems = cartItems.map((item) => {
-      const product = productsById.get(item.productId)
-
       return {
         productId: item.productId,
         quantity: item.quantity,
-        price: product?.price ?? item.price.toFixed(2),
+        price: item.price.toFixed(2),
+        size: item.size,
       }
     })
 
