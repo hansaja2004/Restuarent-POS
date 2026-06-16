@@ -30,6 +30,7 @@ export const products = pgTable('products', {
   largePrice: numeric('large_price', { precision: 10, scale: 2 }),
   categoryId: integer('category_id').references(() => categories.id).notNull(),
   imageUrl: text('image_url'),
+  isAvailable: boolean('is_available').notNull().default(true),
 });
 
 export const orders = pgTable('orders', {

@@ -23,19 +23,30 @@ export async function createProduct(formData: FormData) {
   if (session?.role !== 'admin') return { error: 'Unauthorized' };
 
   const name = formData.get('name') as string;
-  const smallPrice = formData.get('smallPrice') as string;
-  const mediumPrice = formData.get('mediumPrice') as string;
-  const largePrice = formData.get('largePrice') as string;
+  const pricingType = formData.get('pricingType') as string;
   const categoryId = Number.parseInt(formData.get('categoryId') as string, 10);
   const imageUrl = formData.get('imageUrl') as string;
-  const price = mediumPrice || smallPrice || largePrice;
 
-  if (!name || !price || !categoryId) return { error: 'Missing required fields' };
+  let priceStr: string | null = null;
+  let smallPrice: string | null = null;
+  let mediumPrice: string | null = null;
+  let largePrice: string | null = null;
+
+  if (pricingType === 'single') {
+    priceStr = formData.get('price') as string;
+  } else {
+    smallPrice = formData.get('smallPrice') as string;
+    mediumPrice = formData.get('mediumPrice') as string;
+    largePrice = formData.get('largePrice') as string;
+    priceStr = mediumPrice || smallPrice || largePrice;
+  }
+
+  if (!name || !priceStr || !categoryId) return { error: 'Missing required fields' };
 
   try {
     await db.insert(products).values({
       name,
-      price,
+      price: priceStr,
       smallPrice: smallPrice || null,
       mediumPrice: mediumPrice || null,
       largePrice: largePrice || null,
@@ -106,16 +117,38 @@ export async function updateProduct(id: number, formData: FormData) {
   if (session?.role !== 'admin') return { error: 'Unauthorized' };
 
   const name = formData.get('name') as string;
-  const price = formData.get('price') as string;
+  const pricingType = formData.get('pricingType') as string;
   const categoryId = Number.parseInt(formData.get('categoryId') as string, 10);
   const imageUrl = formData.get('imageUrl') as string;
 
-  if (!name || !price || !categoryId) return { error: 'Missing required fields' };
+  let priceStr: string | null = null;
+  let smallPrice: string | null = null;
+  let mediumPrice: string | null = null;
+  let largePrice: string | null = null;
+
+  if (pricingType === 'single') {
+    priceStr = formData.get('price') as string;
+  } else {
+    smallPrice = formData.get('smallPrice') as string;
+    mediumPrice = formData.get('mediumPrice') as string;
+    largePrice = formData.get('largePrice') as string;
+    priceStr = mediumPrice || smallPrice || largePrice;
+  }
+
+  if (!name || !priceStr || !categoryId) return { error: 'Missing required fields' };
 
   try {
     await db
       .update(products)
-      .set({ name, price, categoryId, imageUrl: imageUrl || undefined })
+      .set({ 
+        name, 
+        price: priceStr, 
+        smallPrice: smallPrice || null,
+        mediumPrice: mediumPrice || null,
+        largePrice: largePrice || null,
+        categoryId, 
+        imageUrl: imageUrl || undefined 
+      })
       .where(eq(products.id, id));
     revalidatePath('/');
     revalidatePath('/settings');
@@ -123,6 +156,25 @@ export async function updateProduct(id: number, formData: FormData) {
   } catch (error) {
     console.error(error);
     return { error: 'Failed to update product' };
+  }
+}
+
+export async function toggleProductAvailability(id: number, isAvailable: boolean) {
+  const session = await getSession();
+  if (!session || !['admin', 'manager', 'director', 'cashier'].includes(session.role)) {
+    return { error: 'Unauthorized' };
+  }
+
+  try {
+    await db
+      .update(products)
+      .set({ isAvailable })
+      .where(eq(products.id, id));
+    revalidatePath('/');
+    return { success: true };
+  } catch (error) {
+    console.error(error);
+    return { error: 'Failed to update availability' };
   }
 }
 

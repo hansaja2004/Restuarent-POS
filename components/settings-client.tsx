@@ -23,10 +23,9 @@ import {
   writeToWebUSB,
   writeToWebSerial,
   printHTMLReceipt,
-  defaultConfig as libDefaultConfig,
 } from '@/lib/escpos';
 import type { TaxConfig } from '@/lib/escpos';
-import { useConfig } from '@/components/ConfigContext';
+import { useConfig, defaultConfig as libDefaultConfig } from '@/components/ConfigContext';
 import { createUser, updateUser, deleteUser, changeUserPassword } from '@/app/actions/employees';
 import {
   createProduct,
@@ -144,7 +143,7 @@ export default function SettingsClient({
 
   // Sync when context loads from localStorage
   useEffect(() => {
-    setTaxForm((prev) => ({ ...prev, ...config, ...serverConfig }));
+    setTaxForm((prev) => ({ ...prev, ...serverConfig, ...config }));
   }, [config, serverConfig]);
 
   const handleSaveConfig = (e: React.FormEvent) => {
@@ -277,10 +276,10 @@ export default function SettingsClient({
   const [products, setProducts] = useState<DBProduct[]>(initialProducts);
   const [categories, setCategories] = useState<DBCategory[]>(initialCategories);
   const [newCategoryName, setNewCategoryName] = useState('');
-  const [newItemForm, setNewItemForm] = useState({ name: '', price: '', categoryId: '', imageUrl: '' });
+  const [newItemForm, setNewItemForm] = useState({ name: '', price: '', categoryId: '', imageUrl: '', hasSizes: false, smallPrice: '', mediumPrice: '', largePrice: '' });
   const [newImagePreview, setNewImagePreview] = useState('');
   const [editingProductId, setEditingProductId] = useState<number | null>(null);
-  const [editItemForm, setEditItemForm] = useState({ name: '', price: '', categoryId: '', imageUrl: '' });
+  const [editItemForm, setEditItemForm] = useState({ name: '', price: '', categoryId: '', imageUrl: '', hasSizes: false, smallPrice: '', mediumPrice: '', largePrice: '' });
   const [editImagePreview, setEditImagePreview] = useState('');
 
   const handleAddCategory = async (e: React.FormEvent) => {
@@ -301,21 +300,32 @@ export default function SettingsClient({
 
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newItemForm.name || !newItemForm.price || !newItemForm.categoryId) {
-      return alert('Please fill in all required fields.');
+    if (!newItemForm.name || !newItemForm.categoryId) {
+      return alert('Please fill in required fields.');
     }
+    if (!newItemForm.hasSizes && !newItemForm.price) return alert('Please enter a price.');
+    
     const fd = new FormData();
     fd.append('name', newItemForm.name.trim());
-    fd.append('price', newItemForm.price);
-    fd.append('mediumPrice', newItemForm.price);
     fd.append('categoryId', newItemForm.categoryId);
     fd.append('imageUrl', newItemForm.imageUrl || '/spicy-shrimp-rice.png');
+    
+    if (newItemForm.hasSizes) {
+      fd.append('pricingType', 'sizes');
+      if (newItemForm.smallPrice) fd.append('smallPrice', newItemForm.smallPrice);
+      if (newItemForm.mediumPrice) fd.append('mediumPrice', newItemForm.mediumPrice);
+      if (newItemForm.largePrice) fd.append('largePrice', newItemForm.largePrice);
+    } else {
+      fd.append('pricingType', 'single');
+      fd.append('price', newItemForm.price);
+    }
+    
     startTransition(async () => {
       const result = await createProduct(fd);
       if (result?.error) {
         showMessage(result.error, 'error');
       } else {
-        setNewItemForm({ name: '', price: '', categoryId: '', imageUrl: '' });
+        setNewItemForm({ name: '', price: '', categoryId: '', imageUrl: '', hasSizes: false, smallPrice: '', mediumPrice: '', largePrice: '' });
         setNewImagePreview('');
         showMessage('Menu item added successfully!');
         router.refresh();
@@ -337,14 +347,24 @@ export default function SettingsClient({
   };
 
   const handleSaveEditProduct = async (id: number) => {
-    if (!editItemForm.name || !editItemForm.price || !editItemForm.categoryId) {
+    if (!editItemForm.name || !editItemForm.categoryId) {
       return alert('Please fill in all required fields.');
     }
     const fd = new FormData();
     fd.append('name', editItemForm.name.trim());
-    fd.append('price', editItemForm.price);
     fd.append('categoryId', editItemForm.categoryId);
     fd.append('imageUrl', editItemForm.imageUrl || '/spicy-shrimp-rice.png');
+    
+    if (editItemForm.hasSizes) {
+      fd.append('pricingType', 'sizes');
+      if (editItemForm.smallPrice) fd.append('smallPrice', editItemForm.smallPrice);
+      if (editItemForm.mediumPrice) fd.append('mediumPrice', editItemForm.mediumPrice);
+      if (editItemForm.largePrice) fd.append('largePrice', editItemForm.largePrice);
+    } else {
+      fd.append('pricingType', 'single');
+      fd.append('price', editItemForm.price);
+    }
+
     startTransition(async () => {
       const result = await updateProduct(id, fd);
       if (result?.error) {
@@ -919,34 +939,50 @@ export default function SettingsClient({
                     </div>
                   </div>
                 </div>
-                <div className="flex gap-3">
-                  <div className="flex-1">
-                    <label className="block text-xs font-semibold text-gray-600 mb-1">Price (Rs.)</label>
-                    <input
-                      type="number"
-                      className={inp}
-                      placeholder="0.00"
-                      value={newItemForm.price}
-                      onChange={(e) => setNewItemForm({ ...newItemForm, price: e.target.value })}
-                      required
-                    />
+                <div className="mb-2">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-gray-600 mb-2">
+                    <input type="checkbox" checked={newItemForm.hasSizes} onChange={(e) => setNewItemForm({ ...newItemForm, hasSizes: e.target.checked })} className="accent-teal-600" />
+                    Item has multiple sizes
+                  </label>
+                </div>
+                
+                {newItemForm.hasSizes ? (
+                  <div className="flex gap-2 mb-3">
+                    <div className="flex-1">
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">Small Price</label>
+                      <input type="number" className={inp} placeholder="0.00" value={newItemForm.smallPrice} onChange={(e) => setNewItemForm({ ...newItemForm, smallPrice: e.target.value })} />
+                    </div>
+                    <div className="flex-1">
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">Medium Price</label>
+                      <input type="number" className={inp} placeholder="0.00" value={newItemForm.mediumPrice} onChange={(e) => setNewItemForm({ ...newItemForm, mediumPrice: e.target.value })} />
+                    </div>
+                    <div className="flex-1">
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">Large Price</label>
+                      <input type="number" className={inp} placeholder="0.00" value={newItemForm.largePrice} onChange={(e) => setNewItemForm({ ...newItemForm, largePrice: e.target.value })} />
+                    </div>
                   </div>
-                  <div className="flex-1">
-                    <label className="block text-xs font-semibold text-gray-600 mb-1">Category</label>
-                    <select
-                      className={inp}
-                      value={newItemForm.categoryId}
-                      onChange={(e) => setNewItemForm({ ...newItemForm, categoryId: e.target.value })}
-                      required
-                    >
-                      <option value="">Select Category</option>
-                      {initialCategories.map((cat) => (
-                        <option key={cat.id} value={cat.id}>
-                          {cat.name}
-                        </option>
-                      ))}
-                    </select>
+                ) : (
+                  <div className="flex-1 mb-3">
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Single Price (Rs.)</label>
+                    <input type="number" className={inp} placeholder="0.00" value={newItemForm.price} onChange={(e) => setNewItemForm({ ...newItemForm, price: e.target.value })} required={!newItemForm.hasSizes} />
                   </div>
+                )}
+
+                <div className="flex-1 mb-4">
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Category</label>
+                  <select
+                    className={inp}
+                    value={newItemForm.categoryId}
+                    onChange={(e) => setNewItemForm({ ...newItemForm, categoryId: e.target.value })}
+                    required
+                  >
+                    <option value="">Select Category</option>
+                    {initialCategories.map((cat) => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <button
                   type="submit"
@@ -1029,15 +1065,24 @@ export default function SettingsClient({
                           value={editItemForm.name}
                           onChange={(e) => setEditItemForm({ ...editItemForm, name: e.target.value })}
                         />
+                        <div className="flex items-center gap-2 mb-1">
+                          <input type="checkbox" checked={editItemForm.hasSizes} onChange={(e) => setEditItemForm({ ...editItemForm, hasSizes: e.target.checked })} />
+                          <span className="text-[10px] text-gray-600 font-bold">Has Sizes</span>
+                        </div>
+                        {editItemForm.hasSizes ? (
+                          <div className="flex gap-1 mb-1">
+                            <input type="number" placeholder="S" className="w-1/3 px-1 py-1 border border-gray-300 rounded text-xs" value={editItemForm.smallPrice} onChange={(e) => setEditItemForm({ ...editItemForm, smallPrice: e.target.value })} />
+                            <input type="number" placeholder="M" className="w-1/3 px-1 py-1 border border-gray-300 rounded text-xs" value={editItemForm.mediumPrice} onChange={(e) => setEditItemForm({ ...editItemForm, mediumPrice: e.target.value })} />
+                            <input type="number" placeholder="L" className="w-1/3 px-1 py-1 border border-gray-300 rounded text-xs" value={editItemForm.largePrice} onChange={(e) => setEditItemForm({ ...editItemForm, largePrice: e.target.value })} />
+                          </div>
+                        ) : (
+                          <div className="mb-1">
+                            <input type="number" placeholder="Price" className="w-full px-2 py-1 border border-gray-300 rounded text-xs" value={editItemForm.price} onChange={(e) => setEditItemForm({ ...editItemForm, price: e.target.value })} />
+                          </div>
+                        )}
                         <div className="flex gap-1">
-                          <input
-                            type="number"
-                            className="w-1/2 px-2 py-1 border border-gray-300 rounded text-xs"
-                            value={editItemForm.price}
-                            onChange={(e) => setEditItemForm({ ...editItemForm, price: e.target.value })}
-                          />
                           <select
-                            className="w-1/2 px-1 py-1 border border-gray-300 rounded text-xs"
+                            className="w-full px-1 py-1 border border-gray-300 rounded text-xs"
                             value={editItemForm.categoryId}
                             onChange={(e) => setEditItemForm({ ...editItemForm, categoryId: e.target.value })}
                           >
@@ -1081,6 +1126,10 @@ export default function SettingsClient({
                                   price: item.price,
                                   categoryId: String(item.categoryId),
                                   imageUrl: item.imageUrl || '',
+                                  hasSizes: !!(item.smallPrice || item.mediumPrice || item.largePrice),
+                                  smallPrice: item.smallPrice || '',
+                                  mediumPrice: item.mediumPrice || '',
+                                  largePrice: item.largePrice || '',
                                 });
                                 setEditImagePreview(item.imageUrl || '');
                               }}

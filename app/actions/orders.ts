@@ -43,6 +43,10 @@ export async function getOrders() {
     .orderBy(desc(orders.createdAt));
 }
 
+/**
+ * Legacy simple checkout — used by the original cart-panel flow.
+ * Kept for backward-compat with admin pages.
+ */
 export async function createOrder(items: { productId: number; quantity: number; price: string; size?: string }[]) {
   const session = await getSession();
   if (!session) return { error: 'Unauthorized' };
@@ -51,17 +55,13 @@ export async function createOrder(items: { productId: number; quantity: number; 
 
   try {
     const subtotal = items.reduce((sum, item) => sum + (Number.parseFloat(item.price) * item.quantity), 0);
-    const discount = subtotal * 0.05;
-    const tax = (subtotal - discount) * 0.026;
-    const totalAmount = subtotal - discount + tax;
+    const totalAmount = subtotal;
 
-    // Create the order
     const [newOrder] = await db.insert(orders).values({
       totalAmount: totalAmount.toFixed(2),
       status: 'completed',
     }).returning();
 
-    // Insert order items
     const itemsToInsert = items.map(item => ({
       orderId: newOrder.id,
       productId: item.productId,
@@ -73,6 +73,49 @@ export async function createOrder(items: { productId: number; quantity: number; 
     await db.insert(orderItems).values(itemsToInsert);
 
     revalidatePath('/');
+    revalidatePath('/orders');
+    revalidatePath('/reports');
+    return { success: true, orderId: newOrder.id };
+  } catch (error) {
+    console.error(error);
+    return { error: 'Failed to create order' };
+  }
+}
+
+/**
+ * Full POS checkout — called by the new POS client with complete order data.
+ */
+export async function createFullOrder(payload: {
+  items: { productId: number; quantity: number; price: string; size?: string }[];
+  totalAmount: number;
+  status: 'completed' | 'unpaid';
+  paymentMethod?: string;
+  notes?: string;
+}) {
+  const session = await getSession();
+  if (!session) return { error: 'Unauthorized' };
+
+  if (!payload.items || payload.items.length === 0) return { error: 'No items in order' };
+
+  try {
+    const [newOrder] = await db.insert(orders).values({
+      totalAmount: payload.totalAmount.toFixed(2),
+      status: payload.status,
+    }).returning();
+
+    const itemsToInsert = payload.items.map(item => ({
+      orderId: newOrder.id,
+      productId: item.productId,
+      size: item.size ?? null,
+      quantity: item.quantity,
+      price: item.price,
+    }));
+
+    await db.insert(orderItems).values(itemsToInsert);
+
+    revalidatePath('/');
+    revalidatePath('/orders');
+    revalidatePath('/reports');
     return { success: true, orderId: newOrder.id };
   } catch (error) {
     console.error(error);

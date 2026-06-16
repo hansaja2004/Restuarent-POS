@@ -93,6 +93,7 @@ export const compileReceiptESC = (
   config: TaxConfig,
   cashierName: string,
   isCopy: boolean = false,
+  isUnpaid: boolean = false,
 ): Uint8Array => {
   const builder = new EscPosBuilder();
   builder.initialize();
@@ -116,6 +117,11 @@ export const compileReceiptESC = (
   if (isCopy) {
     builder.boldOn();
     builder.addLine('*** DUPLICATE COPY ***');
+    builder.boldOff();
+    builder.addLine(lineChar.repeat(width));
+  } else if (isUnpaid) {
+    builder.boldOn();
+    builder.addLine('*** UNPAID BILL ***');
     builder.boldOff();
     builder.addLine(lineChar.repeat(width));
   }
@@ -143,21 +149,22 @@ export const compileReceiptESC = (
     const qtyStr = item.quantity.toString();
     const priceStr = item.price.toFixed(0);
     const subStr = (item.price * item.quantity).toFixed(0);
+    const fullName = item.size && item.size !== 'Regular' ? `${item.name} (${item.size.charAt(0)})` : item.name;
 
     if (is80) {
-      const name = item.name.substring(0, 24).padEnd(25, ' ');
+      const name = fullName.substring(0, 24).padEnd(25, ' ');
       const qty = qtyStr.padStart(4, ' ') + ' ';
       const price = priceStr.padStart(7, ' ') + ' ';
       const sub = subStr.padStart(10, ' ');
       builder.addLine(`${name}${qty}${price}${sub}`);
-      if (item.name.length > 24) builder.addLine(`  ${item.name.substring(24)}`);
+      if (fullName.length > 24) builder.addLine(`  ${fullName.substring(24)}`);
     } else {
-      const name = item.name.substring(0, 14).padEnd(15, ' ');
+      const name = fullName.substring(0, 14).padEnd(15, ' ');
       const qty = qtyStr.padStart(3, ' ') + ' ';
       const price = priceStr.padStart(5, ' ') + ' ';
       const sub = subStr.padStart(7, ' ');
       builder.addLine(`${name}${qty}${price}${sub}`);
-      if (item.name.length > 14) builder.addLine(`  ${item.name.substring(14)}`);
+      if (fullName.length > 14) builder.addLine(`  ${fullName.substring(14)}`);
     }
   });
 
@@ -175,15 +182,18 @@ export const compileReceiptESC = (
     (sum: number, item: any) => sum + item.price * item.quantity,
     0,
   );
-  const hasCharges = !order.isCustomerSelected && order.type !== 'Counter';
+  const hasCharges = !order.isCustomerSelected;
 
   builder.addLine(formatTotalLine('Subtotal: ', foodSubtotal));
 
+  const applyServiceCharge = order.applyServiceCharge !== false;
   const serviceChargePercent =
-    hasCharges && config.enableServiceCharge
-      ? order.type === 'Waiter'
+    applyServiceCharge && hasCharges && config.enableServiceCharge
+      ? order.type === 'Dine in'
         ? config.waiterServiceCharge
-        : config.counterServiceCharge
+        : order.type === 'Takeaway' || order.type === 'Online'
+        ? config.counterServiceCharge
+        : 0
       : 0;
   const serviceCharge = (foodSubtotal * serviceChargePercent) / 100;
   if (hasCharges && config.enableServiceCharge && serviceCharge > 0) {
@@ -261,46 +271,63 @@ export const getDrawerKickBytes = (pin: number = 0): Uint8Array => {
   }
 };
 
-export const writeToWebUSB = async (device: USBDevice, bytes: Uint8Array): Promise<void> => {
-  await device.open();
-  await device.selectConfiguration(1);
-  await device.claimInterface(0);
+const withTimeout = <T>(promise: Promise<T>, ms = 2000): Promise<T> => {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('Timeout')), ms))
+  ]);
+};
 
-  let endpointNumber = -1;
-  const interfaces = device.configuration?.interfaces || [];
-  for (const iface of interfaces) {
-    for (const alt of iface.alternates || []) {
-      for (const ep of alt.endpoints || []) {
-        if (ep.direction === 'out' && ep.type === 'bulk') {
-          endpointNumber = ep.endpointNumber;
-          break;
+export const writeToWebUSB = async (device: USBDevice, bytes: Uint8Array): Promise<void> => {
+  await withTimeout((async () => {
+    try {
+      if (!device.opened) await device.open();
+    } catch (e) {
+      console.warn('USB Open error (might already be open):', e);
+    }
+    
+    try {
+      if (device.configuration === null) await device.selectConfiguration(1);
+      await device.claimInterface(0);
+    } catch (e) {
+      console.warn('USB Config/Claim error:', e);
+    }
+
+    let endpointNumber = -1;
+    const interfaces = device.configuration?.interfaces || [];
+    for (const iface of interfaces) {
+      for (const alt of iface.alternates || []) {
+        for (const ep of alt.endpoints || []) {
+          if (ep.direction === 'out' && ep.type === 'bulk') {
+            endpointNumber = ep.endpointNumber;
+            break;
+          }
         }
+        if (endpointNumber !== -1) break;
       }
       if (endpointNumber !== -1) break;
     }
-    if (endpointNumber !== -1) break;
-  }
 
-  if (endpointNumber === -1) {
-    throw new Error('Could not find Bulk OUT endpoint on the paired printer.');
-  }
+    if (endpointNumber === -1) {
+      throw new Error('Could not find Bulk OUT endpoint on the paired printer.');
+    }
 
-  await device.transferOut(endpointNumber, bytes);
-
-  try {
-    await device.releaseInterface(0);
-    await device.close();
-  } catch (e) {
-    console.warn('Error closing USB device:', e);
-  }
+    await device.transferOut(endpointNumber, bytes);
+  })(), 3000); // 3 second timeout for USB ops
 };
 
 export const writeToWebSerial = async (port: any, bytes: Uint8Array): Promise<void> => {
-  await port.open({ baudRate: 9600 });
-  const writer = port.writable.getWriter();
-  await writer.write(bytes);
-  writer.releaseLock();
-  await port.close();
+  await withTimeout((async () => {
+    try {
+      // Don't error if already open
+      await port.open({ baudRate: 9600 });
+    } catch (e) {
+      console.warn('Serial Open error:', e);
+    }
+    const writer = port.writable.getWriter();
+    await writer.write(bytes);
+    writer.releaseLock();
+  })(), 3000); // 3 second timeout
 };
 
 export const printHTMLReceipt = (
@@ -308,6 +335,7 @@ export const printHTMLReceipt = (
   config: TaxConfig,
   cashierName: string,
   isCopy: boolean = false,
+  isUnpaid: boolean = false,
 ) => {
   const printArea = document.createElement('div');
   printArea.id = 'thermal-receipt-print-area';
@@ -319,13 +347,16 @@ export const printHTMLReceipt = (
     (sum: number, item: any) => sum + item.price * item.quantity,
     0,
   );
-  const hasCharges = !order.isCustomerSelected && order.type !== 'Counter';
+  const hasCharges = !order.isCustomerSelected;
 
+  const applyServiceCharge = order.applyServiceCharge !== false;
   const serviceChargePercent =
-    hasCharges && config.enableServiceCharge
-      ? order.type === 'Waiter'
+    applyServiceCharge && hasCharges && config.enableServiceCharge
+      ? order.type === 'Dine in'
         ? config.waiterServiceCharge
-        : config.counterServiceCharge
+        : order.type === 'Takeaway' || order.type === 'Online'
+        ? config.counterServiceCharge
+        : 0
       : 0;
   const serviceCharge = (foodSubtotal * serviceChargePercent) / 100;
   const amountForSSCL = foodSubtotal + serviceCharge;
@@ -335,9 +366,10 @@ export const printHTMLReceipt = (
 
   let itemsHtml = '';
   order.items.forEach((item: any) => {
+    const fullName = item.size && item.size !== 'Regular' ? `${item.name} (${item.size})` : item.name;
     itemsHtml += `
       <div style="display:flex;justify-content:space-between;margin-bottom:2px;">
-        <span style="flex:1;text-align:left;">${item.name} x${item.quantity}</span>
+        <span style="flex:1;text-align:left;">${fullName} x${item.quantity}</span>
         <span style="width:80px;text-align:right;">Rs. ${(item.price * item.quantity).toFixed(0)}</span>
       </div>
     `;
@@ -354,6 +386,7 @@ export const printHTMLReceipt = (
     </div>
     ${divider}
     ${isCopy ? `<div style="text-align:center;font-weight:bold;font-size:13px;margin:4px 0;">*** DUPLICATE COPY ***</div>${divider}` : ''}
+    ${isUnpaid ? `<div style="text-align:center;font-weight:bold;font-size:13px;margin:4px 0;">*** UNPAID BILL ***</div>${divider}` : ''}
     <div style="font-size:11px;margin-bottom:4px;line-height:1.3;">
       <div><b>Order:</b> ${order.orderNumber}</div>
       <div><b>Date:</b> ${new Date(order.timestamp).toLocaleString()}</div>
