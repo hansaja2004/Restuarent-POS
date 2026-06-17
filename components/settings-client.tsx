@@ -19,20 +19,15 @@ import {
 } from 'lucide-react';
 import {
   compileReceiptESC,
-  getDrawerKickBytes,
   writeToWebUSB,
   writeToWebSerial,
+  getDrawerKickBytes,
   printHTMLReceipt,
+  generateEscPosImage,
 } from '@/lib/escpos';
 import type { TaxConfig } from '@/lib/escpos';
 import { useConfig, defaultConfig as libDefaultConfig } from '@/components/ConfigContext';
 import { createUser, updateUser, deleteUser, changeUserPassword } from '@/app/actions/employees';
-import {
-  createProduct,
-  deleteProduct,
-  createCategory,
-  updateProduct,
-} from '@/app/actions/products';
 import { saveServerConfig } from '@/app/actions/settings';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -46,27 +41,11 @@ interface DBUser {
   employeeId: string | null;
 }
 
-interface DBProduct {
-  id: number;
-  name: string;
-  price: string;
-  categoryId: number;
-  imageUrl: string | null;
-  smallPrice?: string | null;
-  mediumPrice?: string | null;
-  largePrice?: string | null;
-}
 
-interface DBCategory {
-  id: number;
-  name: string;
-}
 
 interface Props {
   session: { userId: number; role: string; username: string };
   initialUsers: DBUser[];
-  initialProducts: DBProduct[];
-  initialCategories: DBCategory[];
   serverConfig: Partial<TaxConfig>;
 }
 
@@ -112,8 +91,6 @@ const roleBadge = (role: string) => {
 export default function SettingsClient({
   session,
   initialUsers,
-  initialProducts,
-  initialCategories,
   serverConfig,
 }: Props) {
   const router = useRouter();
@@ -260,123 +237,31 @@ export default function SettingsClient({
 
   const handleResetAllRecords = () => {
     const pin = prompt(
-      'WARNING: This will permanently delete ALL local transaction history.\nEnter Manager Authorization PIN to authorize:',
+      'WARNING: This will permanently delete ALL global and local transaction history.\nType "DELETE ALL" to authorize:',
     );
-    if (pin === taxForm.refundPin) {
-      localStorage.removeItem('pos_orders');
-      localStorage.removeItem('refund_logs');
-      showMessage('All local records reset successfully.');
-      setTimeout(() => window.location.reload(), 1500);
+    if (pin === 'DELETE ALL') {
+      startTransition(async () => {
+        // Clear Local Storage
+        localStorage.removeItem('pos_orders');
+        localStorage.removeItem('refund_logs');
+        
+        // Clear DB
+        const { wipeAllTransactions } = await import('@/app/actions/settings');
+        const res = await wipeAllTransactions();
+        
+        if (res.error) {
+          showMessage(res.error, 'error');
+        } else {
+          showMessage('All records wiped successfully.');
+          setTimeout(() => window.location.reload(), 1500);
+        }
+      });
     } else {
-      alert('Authorization Denied! Incorrect PIN.');
+      if (pin !== null) alert('Authorization Denied! Incorrect confirmation phrase.');
     }
   };
 
-  // ── Menu State ───────────────────────────────────────────────────────────────
-  const [products, setProducts] = useState<DBProduct[]>(initialProducts);
-  const [categories, setCategories] = useState<DBCategory[]>(initialCategories);
-  const [newCategoryName, setNewCategoryName] = useState('');
-  const [newItemForm, setNewItemForm] = useState({ name: '', price: '', categoryId: '', imageUrl: '', hasSizes: false, smallPrice: '', mediumPrice: '', largePrice: '' });
-  const [newImagePreview, setNewImagePreview] = useState('');
-  const [editingProductId, setEditingProductId] = useState<number | null>(null);
-  const [editItemForm, setEditItemForm] = useState({ name: '', price: '', categoryId: '', imageUrl: '', hasSizes: false, smallPrice: '', mediumPrice: '', largePrice: '' });
-  const [editImagePreview, setEditImagePreview] = useState('');
 
-  const handleAddCategory = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const fd = new FormData();
-    fd.append('name', newCategoryName.trim());
-    startTransition(async () => {
-      const result = await createCategory(fd);
-      if (result?.error) {
-        showMessage(result.error, 'error');
-      } else {
-        setNewCategoryName('');
-        showMessage('Category added!');
-        router.refresh();
-      }
-    });
-  };
-
-  const handleAddProduct = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newItemForm.name || !newItemForm.categoryId) {
-      return alert('Please fill in required fields.');
-    }
-    if (!newItemForm.hasSizes && !newItemForm.price) return alert('Please enter a price.');
-    
-    const fd = new FormData();
-    fd.append('name', newItemForm.name.trim());
-    fd.append('categoryId', newItemForm.categoryId);
-    fd.append('imageUrl', newItemForm.imageUrl || '/spicy-shrimp-rice.png');
-    
-    if (newItemForm.hasSizes) {
-      fd.append('pricingType', 'sizes');
-      if (newItemForm.smallPrice) fd.append('smallPrice', newItemForm.smallPrice);
-      if (newItemForm.mediumPrice) fd.append('mediumPrice', newItemForm.mediumPrice);
-      if (newItemForm.largePrice) fd.append('largePrice', newItemForm.largePrice);
-    } else {
-      fd.append('pricingType', 'single');
-      fd.append('price', newItemForm.price);
-    }
-    
-    startTransition(async () => {
-      const result = await createProduct(fd);
-      if (result?.error) {
-        showMessage(result.error, 'error');
-      } else {
-        setNewItemForm({ name: '', price: '', categoryId: '', imageUrl: '', hasSizes: false, smallPrice: '', mediumPrice: '', largePrice: '' });
-        setNewImagePreview('');
-        showMessage('Menu item added successfully!');
-        router.refresh();
-      }
-    });
-  };
-
-  const handleDeleteProduct = async (id: number) => {
-    if (!confirm('Are you sure you want to delete this menu item?')) return;
-    startTransition(async () => {
-      const result = await deleteProduct(id);
-      if (result?.error) {
-        showMessage(result.error, 'error');
-      } else {
-        showMessage('Menu item deleted.');
-        router.refresh();
-      }
-    });
-  };
-
-  const handleSaveEditProduct = async (id: number) => {
-    if (!editItemForm.name || !editItemForm.categoryId) {
-      return alert('Please fill in all required fields.');
-    }
-    const fd = new FormData();
-    fd.append('name', editItemForm.name.trim());
-    fd.append('categoryId', editItemForm.categoryId);
-    fd.append('imageUrl', editItemForm.imageUrl || '/spicy-shrimp-rice.png');
-    
-    if (editItemForm.hasSizes) {
-      fd.append('pricingType', 'sizes');
-      if (editItemForm.smallPrice) fd.append('smallPrice', editItemForm.smallPrice);
-      if (editItemForm.mediumPrice) fd.append('mediumPrice', editItemForm.mediumPrice);
-      if (editItemForm.largePrice) fd.append('largePrice', editItemForm.largePrice);
-    } else {
-      fd.append('pricingType', 'single');
-      fd.append('price', editItemForm.price);
-    }
-
-    startTransition(async () => {
-      const result = await updateProduct(id, fd);
-      if (result?.error) {
-        showMessage(result.error, 'error');
-      } else {
-        setEditingProductId(null);
-        setEditImagePreview('');
-        showMessage('Menu item updated!');
-        router.refresh();
-      }
-    });
-  };
 
   // ── User State ───────────────────────────────────────────────────────────────
   const [users, setUsers] = useState<DBUser[]>(initialUsers);
@@ -509,9 +394,6 @@ export default function SettingsClient({
             <Printer size={16} /> Printer &amp; Hardware
           </button>
         )}
-        <button type="button" className={tabBtn('menu')} onClick={() => setActiveTab('menu')}>
-          <BookOpen size={16} /> Menu &amp; Items Editor
-        </button>
         {isManagerOrAbove && (
           <button type="button" className={tabBtn('users')} onClick={() => setActiveTab('users')}>
             <Users size={16} /> User Management
@@ -619,6 +501,39 @@ export default function SettingsClient({
                 <Sliders size={18} className="text-blue-500" /> Receipt Customization &amp; Security
               </h2>
               <form onSubmit={handleSaveConfig} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Receipt Logo</label>
+                  <div className="flex items-center gap-3">
+                    {taxForm.receiptLogoUrl && (
+                      <img src={taxForm.receiptLogoUrl} alt="Logo" className="h-12 w-auto max-w-[100px] object-contain bg-white border rounded" />
+                    )}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="text-xs text-gray-500 cursor-pointer"
+                      onChange={async (e) => {
+                        const f = e.target.files?.[0];
+                        if (!f) return;
+                        try {
+                          const b64 = await compressImageToBase64(f);
+                          const escBytes = await generateEscPosImage(b64);
+                          setTaxForm({ ...taxForm, receiptLogoUrl: b64, receiptLogoEsc: escBytes });
+                        } catch {
+                          showMessage('Image compression failed.', 'error');
+                        }
+                      }}
+                    />
+                    {taxForm.receiptLogoUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setTaxForm({ ...taxForm, receiptLogoUrl: '', receiptLogoEsc: undefined })}
+                        className="text-xs text-red-500 hover:text-red-700 font-medium"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                </div>
                 {[
                   { key: 'receiptName', label: 'Store / Receipt Name' },
                   { key: 'receiptSubtitle', label: 'Subtitle / Tagline' },
@@ -824,18 +739,19 @@ export default function SettingsClient({
               <div className="mt-6 bg-red-50 border border-red-200 rounded-lg p-4">
                 <div className="flex items-center gap-2 mb-1">
                   <AlertTriangle size={16} className="text-red-600" />
-                  <span className="text-sm font-bold text-red-900">Danger Zone: Reset All Records</span>
+                  <span className="text-sm font-bold text-red-900">Danger Zone: Factory Reset Data</span>
                 </div>
                 <p className="text-xs text-red-700 mb-3">
-                  Permanently clears all local orders, transaction history, and refund logs from this device.
+                  Permanently deletes ALL orders, transaction history, and refund logs from the global database and this device.
                   This action is irreversible.
                 </p>
                 <button
                   type="button"
+                  disabled={isPending}
                   onClick={handleResetAllRecords}
-                  className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg text-sm transition-all"
+                  className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg text-sm transition-all disabled:opacity-50"
                 >
-                  Reset System Records
+                  Wipe All Data
                 </button>
               </div>
             )}
@@ -843,317 +759,6 @@ export default function SettingsClient({
         </div>
       )}
 
-      {/* ════════════════════════════════════════════════════════════════════════
-          TAB 3 — Menu & Items Editor
-      ════════════════════════════════════════════════════════════════════════ */}
-      {activeTab === 'menu' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Category Panel */}
-          <div className={card}>
-            <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-              <BookOpen size={18} className="text-teal-600" /> Food Categories
-            </h2>
-            <div className="flex flex-wrap gap-2 mb-4">
-              {initialCategories.map((cat) => (
-                <span
-                  key={cat.id}
-                  className="bg-teal-600 text-white text-xs font-semibold px-3 py-1 rounded-full"
-                >
-                  {cat.name}
-                </span>
-              ))}
-            </div>
-            {isAdmin && (
-              <form onSubmit={handleAddCategory} className="flex gap-2">
-                <input
-                  type="text"
-                  className={`${inp} flex-1`}
-                  placeholder="New Category Name"
-                  value={newCategoryName}
-                  onChange={(e) => setNewCategoryName(e.target.value)}
-                  required
-                />
-                <button
-                  type="submit"
-                  disabled={isPending}
-                  className="bg-teal-100 hover:bg-teal-200 text-teal-700 font-bold px-3 py-2 rounded-lg text-sm transition-all disabled:opacity-60"
-                >
-                  <Plus size={16} />
-                </button>
-              </form>
-            )}
-          </div>
-
-          {/* Add New Item */}
-          {isAdmin && (
-            <div className={`${card} lg:col-span-2`}>
-              <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-                <Plus size={18} className="text-blue-500" /> Add New Menu Item
-              </h2>
-              <form onSubmit={handleAddProduct} className="space-y-3">
-                <div className="flex gap-4">
-                  {/* Image preview */}
-                  <div className="flex-shrink-0">
-                    {newImagePreview ? (
-                      <img
-                        src={newImagePreview}
-                        alt="preview"
-                        className="w-24 h-24 object-cover rounded-xl border-2 border-teal-400 shadow"
-                      />
-                    ) : (
-                      <div className="w-24 h-24 rounded-xl bg-gradient-to-br from-teal-100 to-blue-100 border-2 border-dashed border-teal-300 flex items-center justify-center text-teal-400">
-                        <BookOpen size={28} />
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex-1 space-y-2">
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">Item Name</label>
-                      <input
-                        type="text"
-                        className={inp}
-                        placeholder="e.g. Devilled Chicken"
-                        value={newItemForm.name}
-                        onChange={(e) => setNewItemForm({ ...newItemForm, name: e.target.value })}
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">Photo Upload (auto-compressed)</label>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        className="w-full text-xs text-gray-500 cursor-pointer"
-                        onChange={async (e) => {
-                          const f = e.target.files?.[0];
-                          if (!f) return;
-                          try {
-                            const b64 = await compressImageToBase64(f);
-                            setNewImagePreview(b64);
-                            setNewItemForm((p) => ({ ...p, imageUrl: b64 }));
-                          } catch {
-                            showMessage('Image compression failed.', 'error');
-                          }
-                        }}
-                      />
-                    </div>
-                  </div>
-                </div>
-                <div className="mb-2">
-                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-gray-600 mb-2">
-                    <input type="checkbox" checked={newItemForm.hasSizes} onChange={(e) => setNewItemForm({ ...newItemForm, hasSizes: e.target.checked })} className="accent-teal-600" />
-                    Item has multiple sizes
-                  </label>
-                </div>
-                
-                {newItemForm.hasSizes ? (
-                  <div className="flex gap-2 mb-3">
-                    <div className="flex-1">
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">Small Price</label>
-                      <input type="number" className={inp} placeholder="0.00" value={newItemForm.smallPrice} onChange={(e) => setNewItemForm({ ...newItemForm, smallPrice: e.target.value })} />
-                    </div>
-                    <div className="flex-1">
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">Medium Price</label>
-                      <input type="number" className={inp} placeholder="0.00" value={newItemForm.mediumPrice} onChange={(e) => setNewItemForm({ ...newItemForm, mediumPrice: e.target.value })} />
-                    </div>
-                    <div className="flex-1">
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">Large Price</label>
-                      <input type="number" className={inp} placeholder="0.00" value={newItemForm.largePrice} onChange={(e) => setNewItemForm({ ...newItemForm, largePrice: e.target.value })} />
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex-1 mb-3">
-                    <label className="block text-xs font-semibold text-gray-600 mb-1">Single Price (Rs.)</label>
-                    <input type="number" className={inp} placeholder="0.00" value={newItemForm.price} onChange={(e) => setNewItemForm({ ...newItemForm, price: e.target.value })} required={!newItemForm.hasSizes} />
-                  </div>
-                )}
-
-                <div className="flex-1 mb-4">
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Category</label>
-                  <select
-                    className={inp}
-                    value={newItemForm.categoryId}
-                    onChange={(e) => setNewItemForm({ ...newItemForm, categoryId: e.target.value })}
-                    required
-                  >
-                    <option value="">Select Category</option>
-                    {initialCategories.map((cat) => (
-                      <option key={cat.id} value={cat.id}>
-                        {cat.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <button
-                  type="submit"
-                  disabled={isPending}
-                  className="w-full bg-teal-600 hover:bg-teal-700 text-white font-bold py-2.5 rounded-lg transition-all flex items-center justify-center gap-2 disabled:opacity-60"
-                >
-                  <Plus size={16} /> Add to Menu
-                </button>
-              </form>
-            </div>
-          )}
-
-          {/* Menu Directory */}
-          <div className={`${card} col-span-1 lg:col-span-3`}>
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-bold text-gray-800">
-                Menu Directory ({initialProducts.length} items)
-              </h2>
-            </div>
-            <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}>
-              {initialProducts.map((item) => (
-                <div
-                  key={item.id}
-                  className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden flex flex-col hover:shadow-md transition-all hover:-translate-y-0.5"
-                >
-                  {/* Photo area */}
-                  {editingProductId === item.id ? (
-                    <div className="relative w-full h-28 bg-gray-100">
-                      {editImagePreview || item.imageUrl ? (
-                        <img
-                          src={editImagePreview || item.imageUrl!}
-                          alt={item.name}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <div className="w-full h-full bg-gradient-to-tr from-teal-100 to-blue-100 flex items-center justify-center text-teal-400">
-                          <BookOpen size={32} />
-                        </div>
-                      )}
-                      <label className="absolute bottom-2 left-1/2 -translate-x-1/2 cursor-pointer bg-black/60 text-white text-[10px] font-bold px-3 py-0.5 rounded-full hover:bg-black/80 transition-all whitespace-nowrap">
-                        Change Photo
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={async (e) => {
-                            const f = e.target.files?.[0];
-                            if (!f) return;
-                            try {
-                              const b64 = await compressImageToBase64(f);
-                              setEditImagePreview(b64);
-                              setEditItemForm((p) => ({ ...p, imageUrl: b64 }));
-                            } catch {
-                              showMessage('Image compression failed.', 'error');
-                            }
-                          }}
-                        />
-                      </label>
-                    </div>
-                  ) : item.imageUrl ? (
-                    <img src={item.imageUrl} alt={item.name} className="w-full h-28 object-cover" />
-                  ) : (
-                    <div className="w-full h-28 bg-gradient-to-tr from-teal-500 to-blue-400 flex items-center justify-center text-white text-2xl font-bold select-none">
-                      {item.name
-                        .split(' ')
-                        .map((n) => n[0])
-                        .slice(0, 3)
-                        .join('')
-                        .toUpperCase()}
-                    </div>
-                  )}
-
-                  {/* Info / Edit */}
-                  <div className="p-3 flex flex-col gap-2 flex-1">
-                    {editingProductId === item.id ? (
-                      <>
-                        <input
-                          type="text"
-                          className="w-full px-2 py-1 border border-gray-300 rounded text-xs font-bold"
-                          value={editItemForm.name}
-                          onChange={(e) => setEditItemForm({ ...editItemForm, name: e.target.value })}
-                        />
-                        <div className="flex items-center gap-2 mb-1">
-                          <input type="checkbox" checked={editItemForm.hasSizes} onChange={(e) => setEditItemForm({ ...editItemForm, hasSizes: e.target.checked })} />
-                          <span className="text-[10px] text-gray-600 font-bold">Has Sizes</span>
-                        </div>
-                        {editItemForm.hasSizes ? (
-                          <div className="flex gap-1 mb-1">
-                            <input type="number" placeholder="S" className="w-1/3 px-1 py-1 border border-gray-300 rounded text-xs" value={editItemForm.smallPrice} onChange={(e) => setEditItemForm({ ...editItemForm, smallPrice: e.target.value })} />
-                            <input type="number" placeholder="M" className="w-1/3 px-1 py-1 border border-gray-300 rounded text-xs" value={editItemForm.mediumPrice} onChange={(e) => setEditItemForm({ ...editItemForm, mediumPrice: e.target.value })} />
-                            <input type="number" placeholder="L" className="w-1/3 px-1 py-1 border border-gray-300 rounded text-xs" value={editItemForm.largePrice} onChange={(e) => setEditItemForm({ ...editItemForm, largePrice: e.target.value })} />
-                          </div>
-                        ) : (
-                          <div className="mb-1">
-                            <input type="number" placeholder="Price" className="w-full px-2 py-1 border border-gray-300 rounded text-xs" value={editItemForm.price} onChange={(e) => setEditItemForm({ ...editItemForm, price: e.target.value })} />
-                          </div>
-                        )}
-                        <div className="flex gap-1">
-                          <select
-                            className="w-full px-1 py-1 border border-gray-300 rounded text-xs"
-                            value={editItemForm.categoryId}
-                            onChange={(e) => setEditItemForm({ ...editItemForm, categoryId: e.target.value })}
-                          >
-                            {initialCategories.map((cat) => (
-                              <option key={cat.id} value={cat.id}>
-                                {cat.name}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="flex gap-1">
-                          <button
-                            onClick={() => handleSaveEditProduct(item.id)}
-                            disabled={isPending}
-                            className="flex-1 text-xs bg-green-100 hover:bg-green-200 text-green-700 font-bold py-1 rounded transition-all"
-                          >
-                            Save
-                          </button>
-                          <button
-                            onClick={() => { setEditingProductId(null); setEditImagePreview(''); }}
-                            className="flex-1 text-xs bg-red-100 hover:bg-red-200 text-red-700 font-bold py-1 rounded transition-all"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <p className="font-bold text-sm text-gray-800 leading-tight">{item.name}</p>
-                        <p className="text-xs text-gray-500">
-                          {initialCategories.find((c) => c.id === item.categoryId)?.name ?? '—'}
-                        </p>
-                        <p className="text-teal-600 font-bold text-sm">Rs. {parseFloat(item.price).toFixed(2)}</p>
-                        {isAdmin && (
-                          <div className="flex gap-1 pt-2 border-t border-gray-100">
-                            <button
-                              onClick={() => {
-                                setEditingProductId(item.id);
-                                setEditItemForm({
-                                  name: item.name,
-                                  price: item.price,
-                                  categoryId: String(item.categoryId),
-                                  imageUrl: item.imageUrl || '',
-                                  hasSizes: !!(item.smallPrice || item.mediumPrice || item.largePrice),
-                                  smallPrice: item.smallPrice || '',
-                                  mediumPrice: item.mediumPrice || '',
-                                  largePrice: item.largePrice || '',
-                                });
-                                setEditImagePreview(item.imageUrl || '');
-                              }}
-                              className="flex-1 text-[10px] bg-gray-100 hover:bg-blue-100 text-blue-700 font-bold py-1 rounded transition-all flex items-center justify-center gap-1"
-                            >
-                              <Edit2 size={10} /> Edit
-                            </button>
-                            <button
-                              onClick={() => handleDeleteProduct(item.id)}
-                              className="flex-1 text-[10px] bg-gray-100 hover:bg-red-100 text-red-600 font-bold py-1 rounded transition-all flex items-center justify-center gap-1"
-                            >
-                              <Trash2 size={10} /> Del
-                            </button>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ════════════════════════════════════════════════════════════════════════
           TAB 4 — User Management

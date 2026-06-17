@@ -76,6 +76,7 @@ interface SavedOrder {
   notes?: string;
   isCustomerSelected?: boolean;
   applyServiceCharge?: boolean;
+  dbId?: number; // Backend database ID
 }
 
 interface RefundLog {
@@ -113,10 +114,12 @@ export default function MainPos({
   products,
   categories,
   session,
+  globalOrders = [],
 }: {
   products: Product[];
   categories: Category[];
   session: Session;
+  globalOrders?: any[];
 }) {
   const { config } = useConfig();
   const [isPending, startTransition] = useTransition();
@@ -305,12 +308,36 @@ export default function MainPos({
   const [savedOrders, setSavedOrders] = useState<SavedOrder[]>([]);
 
   useEffect(() => {
-    setSavedOrders(loadOrders());
-  }, []);
+    // 1. Load any local orders
+    const localOrders = loadOrders();
+    const localUnpaid = localOrders.filter(o => o.status === 'Unpaid');
+
+    // 2. Map global orders to SavedOrder format
+    const mappedGlobal: SavedOrder[] = globalOrders.map((go: any) => ({
+      id: go.id.toString(),
+      orderNumber: go.orderNumber || `ORD-Sys-${go.id}`,
+      type: (go.orderType as OrderType) || 'Takeaway',
+      items: go.cartItems || [],
+      total: parseFloat(go.totalAmount),
+      status: go.status === 'refunded' ? 'Refunded' : 'Paid',
+      timestamp: new Date(go.createdAt).getTime(),
+      paymentMethod: go.paymentMethod || 'Cash',
+      dbId: go.id,
+    }));
+
+    // 3. Merge them (Local Unpaid + Global Paid/Refunded)
+    // We sort them by timestamp descending
+    const merged = [...localUnpaid, ...mappedGlobal].sort((a, b) => b.timestamp - a.timestamp);
+
+    setSavedOrders(merged);
+    // Note: We don't persist global orders to localStorage to avoid bloating it,
+    // but we can if we want offline history. We will just keep local unpaid in local storage.
+  }, [globalOrders]);
 
   const persistAndSet = (orders: SavedOrder[]) => {
     setSavedOrders(orders);
-    persistOrders(orders);
+    // Only persist Unpaid to localStorage so we don't duplicate global data or bloat local storage
+    persistOrders(orders.filter(o => o.status === 'Unpaid'));
   };
 
   const generateOrderNumber = () => {
@@ -322,6 +349,9 @@ export default function MainPos({
   const [showCheckout, setShowCheckout] = useState(false);
   const [paymentSplits, setPaymentSplits] = useState({ Cash: '', Card: '', QR: '' });
   const [orderNotes, setOrderNotes] = useState('');
+  
+  // Search state for History Tab
+  const [historySearch, setHistorySearch] = useState('');
 
   const cashGiven = parseFloat(paymentSplits.Cash) || 0;
   const cardGiven = parseFloat(paymentSplits.Card) || 0;
@@ -331,9 +361,10 @@ export default function MainPos({
 
   const handleSaveUnpaid = () => {
     if (cart.length === 0) return;
+    const ordNum = generateOrderNumber();
     const order: SavedOrder = {
       id: Date.now().toString(),
-      orderNumber: generateOrderNumber(),
+      orderNumber: ordNum,
       type: orderType,
       items: [...cart],
       total: finalTotal,
@@ -343,6 +374,11 @@ export default function MainPos({
       isCustomerSelected: isCustomerSelected || undefined,
       applyServiceCharge: applyServiceCharge,
     };
+    
+    // Also save unpaid orders to backend if needed, or wait until paid. 
+    // Currently unpaid orders are just stored locally until paid.
+    // Let's keep it local for now, as it will be sent to the backend when processed from "Unpaid" tab.
+
     persistAndSet([order, ...savedOrders]);
     if (config.autoPrintReceipt) handlePrint(order, false, false, true);
     else alert('Order saved as UNPAID.');
@@ -351,7 +387,7 @@ export default function MainPos({
     setIsCustomerSelected(false);
   };
 
-  const processPayment = () => {
+  const processPayment = async () => {
     let methodStr = '';
     const parts = [];
     if (cashGiven > 0) parts.push(`Cash`);
@@ -361,9 +397,10 @@ export default function MainPos({
 
     const totalCashInHand = cashGiven;
 
+    const ordNum = generateOrderNumber();
     const order: SavedOrder = {
       id: Date.now().toString(),
-      orderNumber: generateOrderNumber(),
+      orderNumber: ordNum,
       type: orderType,
       items: [...cart],
       total: finalTotal,
@@ -377,23 +414,35 @@ export default function MainPos({
       applyServiceCharge: applyServiceCharge,
     };
 
-    // Persist locally
-    persistAndSet([order, ...savedOrders]);
-
-    // Also write to DB (fire-and-forget)
-    startTransition(async () => {
-      await createFullOrder({
+    // Show loading state or just await it before persisting locally so we get the dbId
+    try {
+      const dbResult = await createFullOrder({
+        orderNumber: ordNum,
         items: cart.map((i) => ({
           productId: i.productId,
           quantity: i.quantity,
           price: i.price.toFixed(2),
+          size: i.size,
         })),
+        subtotal: foodSubtotal,
+        taxAmount: sscl + vat,
+        serviceCharge: serviceCharge,
+        discount: 0,
         totalAmount: finalTotal,
         status: 'completed',
+        orderType: orderType,
         paymentMethod: methodStr,
         notes: orderNotes,
       });
-    });
+      if (dbResult?.orderId) {
+        order.dbId = dbResult.orderId;
+      }
+    } catch (e) {
+      console.error("Failed to save to DB", e);
+    }
+
+    // Persist locally
+    persistAndSet([order, ...savedOrders]);
 
     const kickDrawer = config.autoKickDrawer && cashGiven > 0;
     if (config.autoPrintReceipt) {
@@ -420,30 +469,64 @@ export default function MainPos({
 
   const handleReprint = (order: SavedOrder) => handlePrint(order, true);
 
-  // ── Refund ────────────────────────────────────────────────────────────────────
+  // ── Refund & Exchange ────────────────────────────────────────────────────────
   const [showRefundModal, setShowRefundModal] = useState(false);
   const [selectedRefundOrder, setSelectedRefundOrder] = useState<SavedOrder | null>(null);
-  const [refundForm, setRefundForm] = useState({ name: '', phone: '', reason: '', pin: '' });
+  const [refundForm, setRefundForm] = useState({ 
+    name: '', phone: '', reason: '', pin: '', amount: '', method: 'Cash'
+  });
 
   const initiateRefund = (order: SavedOrder) => {
     setSelectedRefundOrder(order);
     setShowRefundModal(true);
-    setRefundForm({ name: '', phone: '', reason: '', pin: '' });
+    setRefundForm({ name: '', phone: '', reason: '', pin: '', amount: order.total.toString(), method: 'Cash' });
   };
 
-  const executeRefund = (e: React.FormEvent) => {
+  const executeRefund = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedRefundOrder) return;
     if (refundForm.pin !== config.refundPin) {
       alert('Invalid Authorization PIN! Refund Denied.');
       return;
     }
+
+    const refundAmt = parseFloat(refundForm.amount);
+    if (isNaN(refundAmt) || refundAmt <= 0 || refundAmt > selectedRefundOrder.total) {
+      alert('Invalid refund amount!');
+      return;
+    }
+
+    // Exchange Logic
+    if (refundForm.method === 'Exchange') {
+      // Add a negative item to the cart representing the store credit
+      setCart(prev => [
+        ...prev,
+        {
+          id: `exchange-${Date.now()}`,
+          productId: 0,
+          name: `[Exchange Credit from ${selectedRefundOrder.orderNumber}]`,
+          price: -Math.abs(refundAmt),
+          quantity: 1,
+        }
+      ]);
+      setActiveTab('New');
+    }
+
+    // Call server action to mark as refunded in DB
+    if (selectedRefundOrder.dbId) {
+      startTransition(async () => {
+        // We import refundOrder dynamically or statically
+        const { refundOrder } = await import('@/app/actions/orders');
+        await refundOrder(selectedRefundOrder.dbId!, refundAmt, refundForm.method);
+      });
+    }
+
     const log: RefundLog = {
       id: Date.now().toString(),
       customerName: refundForm.name,
       customerPhone: refundForm.phone,
       reason: refundForm.reason,
-      amount: selectedRefundOrder.total,
+      amount: refundAmt,
       cashierName: session.username,
       timestamp: Date.now(),
       orderNumber: selectedRefundOrder.orderNumber,
@@ -451,13 +534,20 @@ export default function MainPos({
     const existing: RefundLog[] = JSON.parse(localStorage.getItem(REFUNDS_KEY) || '[]');
     localStorage.setItem(REFUNDS_KEY, JSON.stringify([log, ...existing]));
 
+    // We only mark the order as fully 'Refunded' locally if the refund amount equals total, otherwise leave as Paid?
+    // Let's mark it as Refunded so it shows up differently.
     persistAndSet(
       savedOrders.map((o) =>
         o.id === selectedRefundOrder.id ? { ...o, status: 'Refunded' as const } : o,
       ),
     );
     setShowRefundModal(false);
-    alert('Refund processed successfully!');
+    
+    if (refundForm.method === 'Exchange') {
+      alert('Exchange credit applied to New Order tab!');
+    } else {
+      alert(`Refund of Rs. ${refundAmt.toFixed(2)} processed to ${refundForm.method}!`);
+    }
   };
 
   // ── Excel Export ──────────────────────────────────────────────────────────────
@@ -718,29 +808,38 @@ export default function MainPos({
           {activeTab === 'History' && (
             <div className="max-w-3xl mx-auto space-y-4">
               {/* Export header */}
-              <div className="flex justify-between items-center bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white rounded-xl border border-gray-200 p-4 shadow-sm gap-3">
                 <div>
                   <h2 className="font-bold text-gray-900">Order History Logs</h2>
                   <p className="text-xs text-gray-500 mt-0.5">
                     View, reprint, or export today's paid transactions to Excel.
                   </p>
                 </div>
-                <button
-                  onClick={exportToExcel}
-                  className="flex items-center gap-2 bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 font-bold px-4 py-2 rounded-lg text-sm transition-all"
-                >
-                  <Download size={14} /> Export Today's Excel
-                </button>
+                <div className="flex items-center gap-3 w-full sm:w-auto">
+                  <input
+                    type="text"
+                    placeholder="Search ORD-XXXX..."
+                    value={historySearch}
+                    onChange={(e) => setHistorySearch(e.target.value)}
+                    className="flex-1 sm:flex-none border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  />
+                  <button
+                    onClick={exportToExcel}
+                    className="flex items-center gap-2 bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 font-bold px-4 py-2 rounded-lg text-sm transition-all"
+                  >
+                    <Download size={14} /> Export
+                  </button>
+                </div>
               </div>
 
-              {savedOrders.filter((o) => o.status === 'Paid' || o.status === 'Refunded').length === 0 ? (
+              {savedOrders.filter((o) => (o.status === 'Paid' || o.status === 'Refunded') && o.orderNumber.toLowerCase().includes(historySearch.toLowerCase())).length === 0 ? (
                 <div className="text-center py-16 text-gray-400">
                   <CheckCircle size={48} className="mx-auto mb-3 opacity-30" />
-                  <p className="text-lg">No order history yet.</p>
+                  <p className="text-lg">{historySearch ? 'No matching orders found.' : 'No order history yet.'}</p>
                 </div>
               ) : (
                 savedOrders
-                  .filter((o) => o.status === 'Paid' || o.status === 'Refunded')
+                  .filter((o) => (o.status === 'Paid' || o.status === 'Refunded') && o.orderNumber.toLowerCase().includes(historySearch.toLowerCase()))
                   .map((order) => (
                     <div
                       key={order.id}
@@ -1159,12 +1258,39 @@ export default function MainPos({
                     type="text"
                     className="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:outline-none focus:border-red-400 focus:ring-1 focus:ring-red-400 transition-all"
                     placeholder={placeholder}
-                    value={refundForm[key as keyof typeof refundForm]}
+                    value={(refundForm as any)[key]}
                     onChange={(e) => setRefundForm({ ...refundForm, [key]: e.target.value })}
                     required
                   />
                 </div>
               ))}
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Amount to Refund *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    max={selectedRefundOrder?.total}
+                    className="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:outline-none focus:border-red-400 focus:ring-1 focus:ring-red-400 transition-all"
+                    value={refundForm.amount}
+                    onChange={(e) => setRefundForm({ ...refundForm, amount: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Refund Method *</label>
+                  <select
+                    className="w-full border border-gray-300 bg-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-red-400 focus:ring-1 focus:ring-red-400 transition-all"
+                    value={refundForm.method}
+                    onChange={(e) => setRefundForm({ ...refundForm, method: e.target.value })}
+                  >
+                    <option value="Cash">Cash (from drawer)</option>
+                    <option value="Card">Card (reversal)</option>
+                    <option value="Exchange">Exchange Items</option>
+                  </select>
+                </div>
+              </div>
 
               <div className="bg-red-50 border border-red-100 rounded-xl p-4">
                 <label className="block text-sm font-bold text-red-800 mb-2">

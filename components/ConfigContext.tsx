@@ -20,6 +20,7 @@ export const defaultConfig: TaxConfig = {
   autoPrintReceipt: true,
   autoKickDrawer: true,
   drawerPin: 0,
+  receiptLogoUrl: '',
   receiptName: 'RUBBER ESTATE',
   receiptSubtitle: 'Premium Restaurant & POS',
   receiptAddress: 'Colombo, Sri Lanka',

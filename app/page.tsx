@@ -1,6 +1,7 @@
 import Sidebar from '@/components/sidebar'
 import MainPos from '@/components/main-pos'
 import { getCategories, getProducts } from './actions/products'
+import { getOrders } from './actions/orders'
 import { getSession } from '@/lib/auth'
 import { redirect } from 'next/navigation'
 
@@ -12,13 +13,14 @@ export default async function Page() {
 
   const categories = await getCategories();
   const products = await getProducts();
+  const globalOrders = await getOrders();
 
   return (
     <div className="flex h-screen bg-gray-100">
       {/* Sidebar */}
       <Sidebar />
 
-      <MainPos products={products} categories={categories} session={session} />
+      <MainPos products={products} categories={categories} session={session} globalOrders={globalOrders} />
     </div>
   )
 }

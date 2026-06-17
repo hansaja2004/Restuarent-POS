@@ -2,7 +2,6 @@ import Sidebar from '@/components/sidebar';
 import SettingsClient from '@/components/settings-client';
 import { getSession } from '@/lib/auth';
 import { getUsers } from '@/app/actions/employees';
-import { getProducts, getCategories } from '@/app/actions/products';
 import { getServerConfig } from '@/app/actions/settings';
 import { redirect } from 'next/navigation';
 
@@ -12,10 +11,8 @@ export default async function SettingsPage() {
     redirect('/login');
   }
 
-  const [users, products, categories, serverConfig] = await Promise.all([
+  const [users, serverConfig] = await Promise.all([
     getUsers(),
-    getProducts(),
-    getCategories(),
     getServerConfig(),
   ]);
 
@@ -26,8 +23,6 @@ export default async function SettingsPage() {
         <SettingsClient
           session={session}
           initialUsers={users}
-          initialProducts={products}
-          initialCategories={categories}
           serverConfig={serverConfig}
         />
       </div>

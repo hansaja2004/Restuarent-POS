@@ -78,6 +78,8 @@ export interface TaxConfig {
   autoPrintReceipt: boolean;
   autoKickDrawer: boolean;
   drawerPin: number;
+  receiptLogoUrl?: string;
+  receiptLogoEsc?: number[];
   receiptName: string;
   receiptSubtitle: string;
   receiptAddress: string;
@@ -87,6 +89,57 @@ export interface TaxConfig {
   enableServiceCharge: boolean;
   enableSSCL: boolean;
 }
+
+export const generateEscPosImage = (base64Url: string): Promise<number[]> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'Anonymous';
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      const targetWidth = 200;
+      const ratio = targetWidth / img.width;
+      const targetHeight = Math.round(img.height * ratio);
+      const width = Math.ceil(targetWidth / 8) * 8;
+      const height = targetHeight;
+      canvas.width = width;
+      canvas.height = height;
+      if (!ctx) return resolve([]);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(img, (width - targetWidth) / 2, 0, targetWidth, height);
+      const imgData = ctx.getImageData(0, 0, width, height);
+      const data = imgData.data;
+      const rasterBytes: number[] = [];
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x += 8) {
+          let byte = 0;
+          for (let b = 0; b < 8; b++) {
+            const i = (y * width + x + b) * 4;
+            if (i < data.length) {
+              const r = data[i];
+              const g = data[i + 1];
+              const b_color = data[i + 2];
+              const a = data[i + 3];
+              const brightness = (r + g + b_color) / 3;
+              if (brightness < 128 && a > 128) {
+                byte |= (1 << (7 - b));
+              }
+            }
+          }
+          rasterBytes.push(byte);
+        }
+      }
+      const xL = (width / 8) % 256;
+      const xH = Math.floor((width / 8) / 256);
+      const yL = height % 256;
+      const yH = Math.floor(height / 256);
+      resolve([0x1d, 0x76, 0x30, 0x00, xL, xH, yL, yH, ...rasterBytes]);
+    };
+    img.onerror = () => resolve([]);
+    img.src = base64Url;
+  });
+};
 
 export const compileReceiptESC = (
   order: any,
@@ -100,6 +153,9 @@ export const compileReceiptESC = (
 
   // Header
   builder.alignCenter();
+  if (config.receiptLogoEsc && config.receiptLogoEsc.length > 0) {
+    builder.addBytes(config.receiptLogoEsc);
+  }
   builder.boldOn();
   builder.doubleSizeOn();
   builder.addLine(config.receiptName || 'RUBBER ESTATE');
@@ -379,6 +435,7 @@ export const printHTMLReceipt = (
 
   printArea.innerHTML = `
     <div style="text-align:center;margin-bottom:8px;">
+      ${config.receiptLogoUrl ? `<img src="${config.receiptLogoUrl}" style="max-height:80px;max-width:100%;object-fit:contain;margin-bottom:4px;" alt="Logo" /><br/>` : ''}
       <h2 style="margin:0;font-size:16px;font-weight:bold;">${config.receiptName || 'RUBBER ESTATE'}</h2>
       ${config.receiptSubtitle ? `<div style="font-size:12px;">${config.receiptSubtitle}</div>` : ''}
       ${config.receiptAddress ? `<div style="font-size:11px;">${config.receiptAddress}</div>` : ''}

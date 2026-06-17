@@ -1,7 +1,7 @@
 'use server';
 
 import { db } from '@/lib/db';
-import { products, categories } from '@/lib/db/schema';
+import { products, categories, orderItems } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { getSession } from '@/lib/auth';
@@ -20,7 +20,7 @@ export async function getCategories() {
 
 export async function createProduct(formData: FormData) {
   const session = await getSession();
-  if (session?.role !== 'admin') return { error: 'Unauthorized' };
+  if (!session || !['admin', 'manager', 'director'].includes(session.role)) return { error: 'Unauthorized' };
 
   const name = formData.get('name') as string;
   const pricingType = formData.get('pricingType') as string;
@@ -55,6 +55,8 @@ export async function createProduct(formData: FormData) {
     });
     revalidatePath('/');
     revalidatePath('/admin/products');
+    revalidatePath('/menu');
+    revalidatePath('/settings');
     return { success: true };
   } catch (error) {
     console.error(error);
@@ -64,14 +66,22 @@ export async function createProduct(formData: FormData) {
 
 export async function deleteProduct(id: number) {
   const session = await getSession();
-  if (session?.role !== 'admin') return { error: 'Unauthorized' };
+  if (!session || !['admin', 'manager', 'director'].includes(session.role)) return { error: 'Unauthorized' };
 
   try {
+    // Force delete any order items associated with this product to bypass the foreign key constraint
+    // This will remove the item from historical receipts
+    await db.delete(orderItems).where(eq(orderItems.productId, id));
+    
+    // Now delete the product itself
     await db.delete(products).where(eq(products.id, id));
+    
     revalidatePath('/');
     revalidatePath('/admin/products');
+    revalidatePath('/menu');
+    revalidatePath('/settings');
     return { success: true };
-  } catch (error) {
+  } catch (error: any) {
     console.error(error);
     return { error: 'Failed to delete product' };
   }
@@ -79,7 +89,7 @@ export async function deleteProduct(id: number) {
 
 export async function createCategory(formData: FormData) {
   const session = await getSession();
-  if (session?.role !== 'admin') return { error: 'Unauthorized' };
+  if (!session || !['admin', 'manager', 'director'].includes(session.role)) return { error: 'Unauthorized' };
 
   const name = formData.get('name') as string;
   if (!name) return { error: 'Name is required' };
@@ -87,7 +97,6 @@ export async function createCategory(formData: FormData) {
   try {
     await db.insert(categories).values({ name });
     revalidatePath('/');
-    revalidatePath('/admin/products');
     return { success: true };
   } catch (error) {
     console.error(error);
@@ -97,7 +106,7 @@ export async function createCategory(formData: FormData) {
 
 export async function deleteCategory(id: number) {
   const session = await getSession();
-  if (session?.role !== 'admin') return { error: 'Unauthorized' };
+  if (!session || !['admin', 'manager', 'director'].includes(session.role)) return { error: 'Unauthorized' };
 
   try {
     await db.delete(categories).where(eq(categories.id, id));
@@ -108,13 +117,33 @@ export async function deleteCategory(id: number) {
     return { success: true };
   } catch (error) {
     console.error(error);
-    return { error: 'Failed to delete category' };
+    return { error: 'Failed to delete category. Make sure it has no products.' };
+  }
+}
+
+export async function updateCategory(id: number, formData: FormData) {
+  const session = await getSession();
+  if (!session || !['admin', 'manager', 'director'].includes(session.role)) return { error: 'Unauthorized' };
+
+  const name = formData.get('name') as string;
+  if (!name) return { error: 'Name is required' };
+
+  try {
+    await db.update(categories).set({ name }).where(eq(categories.id, id));
+    revalidatePath('/');
+    revalidatePath('/admin/products');
+    revalidatePath('/menu');
+    revalidatePath('/settings');
+    return { success: true };
+  } catch (error) {
+    console.error(error);
+    return { error: 'Failed to update category' };
   }
 }
 
 export async function updateProduct(id: number, formData: FormData) {
   const session = await getSession();
-  if (session?.role !== 'admin') return { error: 'Unauthorized' };
+  if (!session || !['admin', 'manager', 'director'].includes(session.role)) return { error: 'Unauthorized' };
 
   const name = formData.get('name') as string;
   const pricingType = formData.get('pricingType') as string;
@@ -151,6 +180,8 @@ export async function updateProduct(id: number, formData: FormData) {
       })
       .where(eq(products.id, id));
     revalidatePath('/');
+    revalidatePath('/admin/products');
+    revalidatePath('/menu');
     revalidatePath('/settings');
     return { success: true };
   } catch (error) {
@@ -171,6 +202,8 @@ export async function toggleProductAvailability(id: number, isAvailable: boolean
       .set({ isAvailable })
       .where(eq(products.id, id));
     revalidatePath('/');
+    revalidatePath('/menu');
+    revalidatePath('/settings');
     return { success: true };
   } catch (error) {
     console.error(error);

@@ -35,8 +35,17 @@ export const products = pgTable('products', {
 
 export const orders = pgTable('orders', {
   id: serial('id').primaryKey(),
+  orderNumber: text('order_number'), // Real physical receipt number
+  subtotal: numeric('subtotal', { precision: 10, scale: 2 }), // Cost before taxes
+  taxAmount: numeric('tax_amount', { precision: 10, scale: 2 }), 
+  serviceCharge: numeric('service_charge', { precision: 10, scale: 2 }),
+  discount: numeric('discount', { precision: 10, scale: 2 }),
   totalAmount: numeric('total_amount', { precision: 10, scale: 2 }).notNull(),
-  status: text('status').notNull().default('completed'), // e.g. completed
+  status: text('status').notNull().default('completed'), // e.g. completed, unpaid, refunded
+  orderType: text('order_type').default('Takeaway'), // Dine-in, Takeaway, Online
+  paymentMethod: text('payment_method'), // Cash, Card, QR, etc.
+  refundAmount: numeric('refund_amount', { precision: 10, scale: 2 }),
+  refundMethod: text('refund_method'), // Cash, Card, Exchange
   createdAt: timestamp('created_at').defaultNow(),
 });
 
