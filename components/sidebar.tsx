@@ -13,7 +13,7 @@ export default function Sidebar() {
   const menuItems = [
     { icon: BarChart3, label: 'Dashboard', badge: null, href: '/dashboard' },
     { icon: ShoppingCart, label: 'Point of Sale', badge: null, href: '/' },
-    { icon: ClipboardList, label: 'Orders', badge: null, href: '/orders' },
+
     { icon: Menu, label: 'Menu Management', badge: '8', href: '/menu' },
     { icon: Grid3x3, label: 'Table &Floor Plan', badge: null, href: '/floor-plan' },
     { icon: TrendingUp, label: 'Sales Reports', badge: null, href: '/reports' },

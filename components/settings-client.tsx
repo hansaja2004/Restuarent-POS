@@ -28,7 +28,7 @@ import {
 import type { TaxConfig } from '@/lib/escpos';
 import { useConfig, defaultConfig as libDefaultConfig } from '@/components/ConfigContext';
 import { createUser, updateUser, deleteUser, changeUserPassword } from '@/app/actions/employees';
-import { saveServerConfig } from '@/app/actions/settings';
+import { saveServerConfig, printToNetworkPrinter } from '@/app/actions/settings';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -191,11 +191,12 @@ export default function SettingsClient({
         const bytes = compileReceiptESC(mockOrder, taxForm, session.username);
         await writeToWebUSB(pairedUsbDevice, bytes);
         showMessage('USB Test Print sent successfully!');
-      } else if (taxForm.printerType === 'webserial') {
-        if (!pairedSerialPort) return alert("Click 'Pair Serial Printer' first!");
+      } else if (taxForm.printerType === 'network') {
+        if (!taxForm.networkIp || !taxForm.networkPort) return alert('Configure Network IP and Port first!');
         const bytes = compileReceiptESC(mockOrder, taxForm, session.username);
-        await writeToWebSerial(pairedSerialPort, bytes);
-        showMessage('Serial Test Print sent successfully!');
+        const res = await printToNetworkPrinter(taxForm.networkIp, taxForm.networkPort, Array.from(bytes));
+        if (res.error) throw new Error(res.error);
+        showMessage('Network Test Print sent successfully!');
       }
     } catch (err: any) {
       alert('Print Test Failed: ' + err.message);
@@ -224,11 +225,18 @@ export default function SettingsClient({
           errors.push('Serial: ' + e.message);
         }
       }
+      if (taxForm.printerType === 'network') {
+        if (!taxForm.networkIp || !taxForm.networkPort) return alert('Configure Network IP and Port first!');
+        const res = await printToNetworkPrinter(taxForm.networkIp, taxForm.networkPort, Array.from(bytes));
+        if (res.error) errors.push('Network: ' + res.error);
+        else sent = true;
+      }
+
       if (sent) {
         showMessage('Cash Drawer kick command sent!');
         if (errors.length) alert('Drawer triggered with some errors: ' + errors.join(', '));
       } else {
-        alert(errors.length ? 'Failed: ' + errors.join(', ') : 'No USB/Serial device paired.');
+        alert(errors.length ? 'Failed: ' + errors.join(', ') : 'No USB/Serial device paired, or network failed.');
       }
     } catch (err: any) {
       alert('Drawer Test Failed: ' + err.message);
@@ -236,10 +244,16 @@ export default function SettingsClient({
   };
 
   const handleResetAllRecords = () => {
-    const pin = prompt(
-      'WARNING: This will permanently delete ALL global and local transaction history.\nType "DELETE ALL" to authorize:',
+    const pin = prompt('Enter Manager Authorization PIN to authorize this action:');
+    if (pin !== taxForm.refundPin) {
+      if (pin !== null) alert('Authorization Denied! Incorrect PIN.');
+      return;
+    }
+
+    const confirmPhrase = prompt(
+      'WARNING: This will permanently delete ALL global and local transaction history.\nType "DELETE ALL" to confirm:',
     );
-    if (pin === 'DELETE ALL') {
+    if (confirmPhrase?.trim().toUpperCase() === 'DELETE ALL') {
       startTransition(async () => {
         // Clear Local Storage
         localStorage.removeItem('pos_orders');
@@ -257,7 +271,7 @@ export default function SettingsClient({
         }
       });
     } else {
-      if (pin !== null) alert('Authorization Denied! Incorrect confirmation phrase.');
+      if (confirmPhrase !== null) alert('Authorization Denied! Incorrect confirmation phrase.');
     }
   };
 
@@ -582,6 +596,28 @@ export default function SettingsClient({
               </form>
             </div>
           )}
+
+          {/* Danger Zone (Moved from Hardware tab) */}
+          {isAdmin && (
+            <div className="col-span-1 lg:col-span-2 mt-4 bg-red-50 border border-red-200 rounded-xl p-6 shadow-sm">
+              <div className="flex items-center gap-2 mb-2">
+                <AlertTriangle size={20} className="text-red-600" />
+                <h2 className="text-lg font-bold text-red-900">Danger Zone: Factory Reset Data</h2>
+              </div>
+              <p className="text-sm text-red-700 mb-4">
+                Permanently deletes ALL orders, transaction history, and refund logs from the global database and this device.
+                This action is irreversible. Use this button to reset all past records in the entire system.
+              </p>
+              <button
+                type="button"
+                disabled={isPending}
+                onClick={handleResetAllRecords}
+                className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg text-sm transition-all disabled:opacity-50 flex items-center justify-center gap-2 w-full md:w-auto"
+              >
+                <Trash2 size={16} /> Wipe All System Data & Records
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -623,6 +659,7 @@ export default function SettingsClient({
                     <option value="browser">Browser Print (Recommended)</option>
                     <option value="webusb">Direct WebUSB (ESC/POS)</option>
                     <option value="webserial">Direct WebSerial (COM)</option>
+                    <option value="network">Network IP (RJ45 / LAN)</option>
                   </select>
                 </div>
                 <div>
@@ -637,6 +674,34 @@ export default function SettingsClient({
                   </select>
                 </div>
               </div>
+
+              {taxForm.printerType === 'network' && (
+                <div className="grid grid-cols-2 gap-4 bg-blue-50 p-4 rounded-lg border border-blue-200">
+                  <div className="col-span-2">
+                    <p className="text-sm font-bold text-blue-900 mb-2">Network Printer Configuration</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Printer IP Address</label>
+                    <input
+                      type="text"
+                      className={inp}
+                      placeholder="192.168.1.100"
+                      value={taxForm.networkIp || ''}
+                      onChange={(e) => setTaxForm({ ...taxForm, networkIp: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Printer Port (Default: 9100)</label>
+                    <input
+                      type="number"
+                      className={inp}
+                      placeholder="9100"
+                      value={taxForm.networkPort || 9100}
+                      onChange={(e) => setTaxForm({ ...taxForm, networkPort: parseInt(e.target.value) })}
+                    />
+                  </div>
+                </div>
+              )}
 
               <div className="space-y-2">
                 {[
@@ -734,27 +799,7 @@ export default function SettingsClient({
               </button>
             </form>
 
-            {/* Danger Zone */}
-            {isAdmin && (
-              <div className="mt-6 bg-red-50 border border-red-200 rounded-lg p-4">
-                <div className="flex items-center gap-2 mb-1">
-                  <AlertTriangle size={16} className="text-red-600" />
-                  <span className="text-sm font-bold text-red-900">Danger Zone: Factory Reset Data</span>
-                </div>
-                <p className="text-xs text-red-700 mb-3">
-                  Permanently deletes ALL orders, transaction history, and refund logs from the global database and this device.
-                  This action is irreversible.
-                </p>
-                <button
-                  type="button"
-                  disabled={isPending}
-                  onClick={handleResetAllRecords}
-                  className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg text-sm transition-all disabled:opacity-50"
-                >
-                  Wipe All Data
-                </button>
-              </div>
-            )}
+
           </div>
         </div>
       )}

@@ -1,0 +1,570 @@
+'use client';
+
+import { useState, useTransition, useEffect } from 'react';
+import { 
+  DollarSign, 
+  Download, 
+  ShoppingBag, 
+  Banknote, 
+  CreditCard, 
+  QrCode, 
+  TicketPercent, 
+  Undo2, 
+  Search, 
+  Wallet,
+  BarChart2,
+  UtensilsCrossed,
+  PhoneCall,
+  History,
+  Calendar
+} from 'lucide-react';
+import * as XLSX from 'xlsx';
+import { getHistoricalDashboardStats } from '@/app/actions/reports';
+
+interface Shift {
+  id: string;
+  start: string;
+  end: string;
+}
+
+interface Props {
+  pastShifts: Shift[];
+}
+
+export default function ReportsClient({ pastShifts }: Props) {
+  const [activeTab, setActiveTab] = useState<'overview' | 'item-sales' | 'orders' | 'refunds'>('overview');
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  // Filtering states
+  const [filterMode, setFilterMode] = useState<'shift' | 'custom'>('shift');
+  const [selectedShiftId, setSelectedShiftId] = useState<string>('');
+  
+  // Default to today for custom dates
+  const today = new Date().toISOString().split('T')[0];
+  const [customStart, setCustomStart] = useState<string>(today);
+  const [customEnd, setCustomEnd] = useState<string>(today);
+
+  const [isPending, startTransition] = useTransition();
+  const [stats, setStats] = useState<any>(null);
+  const [orders, setOrders] = useState<any[]>([]);
+
+  const fetchReport = () => {
+    let start: Date, end: Date;
+
+    if (filterMode === 'shift') {
+      const shift = pastShifts.find(s => s.id === selectedShiftId);
+      if (!shift) {
+        alert('Please select a shift first.');
+        return;
+      }
+      start = new Date(shift.start);
+      end = new Date(shift.end);
+    } else {
+      start = new Date(`${customStart}T00:00:00`);
+      end = new Date(`${customEnd}T23:59:59.999`);
+    }
+
+    startTransition(async () => {
+      const result = await getHistoricalDashboardStats(start, end);
+      if (result) {
+        setStats(result.stats);
+        setOrders(result.orders || []);
+      } else {
+        alert('Failed to load report data.');
+      }
+    });
+  };
+
+  const [refundLogs, setRefundLogs] = useState<any[]>([]);
+  useEffect(() => {
+    try {
+      const logs = JSON.parse(localStorage.getItem('refund_logs') || '[]');
+      setRefundLogs(logs);
+    } catch (e) {}
+  }, []);
+
+  const s = stats || {
+    totalAmount: 0,
+    orderCount: 0,
+    totalVAT: 0,
+    totalSSCL: 0,
+    totalServiceCharge: 0,
+    totalDiscount: 0,
+    typeBreakdown: { DineIn: 0, Takeaway: 0, Online: 0 },
+    paymentBreakdown: {},
+    refundCount: 0,
+    refundAmount: 0,
+    itemSales: [],
+  };
+
+  const allHistoryOrders = orders.filter((o) => o.status === 'completed' || o.status === 'refunded');
+  
+  const filteredOrders = allHistoryOrders.filter(o => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    const idMatch = (o.orderNumber || `#${o.id}`).toLowerCase().includes(q);
+    const typeMatch = (o.orderType || 'Takeaway').toLowerCase().includes(q);
+    const payMatch = (o.paymentMethod || 'Cash').toLowerCase().includes(q);
+    return idMatch || typeMatch || payMatch;
+  });
+  const refundedOrders = orders.filter((o) => o.status === 'refunded');
+
+  const handleExportExcel = () => {
+    if (!stats) return alert('Generate a report first.');
+    const wb = XLSX.utils.book_new();
+
+    const summaryData = [
+      ['Report Range', filterMode === 'shift' ? 'Specific Shift' : 'Custom Dates'],
+      [''],
+      ['Total Revenue', s.totalAmount],
+      ['Total Orders', s.orderCount],
+      ['Total VAT', s.totalVAT],
+      ['Total SSCL', s.totalSSCL],
+      ['Total Service Charge', s.totalServiceCharge],
+      ['Total Discount', s.totalDiscount],
+      ['Total Refunds', s.refundAmount],
+      ['Refund Count', s.refundCount],
+      [''],
+      ['Payment Methods'],
+      ...Object.entries(s.paymentBreakdown).map(([method, amt]) => [method, amt]),
+      [''],
+      ['Order Types'],
+      ['Takeaway', s.typeBreakdown.Takeaway],
+      ['Dine-In', s.typeBreakdown.DineIn],
+      ['Online', s.typeBreakdown.Online],
+    ];
+    const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+    XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+
+    const ordersData = [
+      ['Order Number', 'Date', 'Status', 'Order Type', 'Payment Method', 'Subtotal', 'VAT', 'SSCL', 'Service Charge', 'Total Amount', 'Refund Amount']
+    ];
+    allHistoryOrders.forEach(o => {
+      ordersData.push([
+        o.orderNumber || `#${o.id}`,
+        o.createdAt ? new Date(o.createdAt).toLocaleString() : '',
+        o.status,
+        o.orderType || 'Takeaway',
+        o.paymentMethod || 'Cash',
+        o.subtotal || '',
+        o.vatAmount || '',
+        o.ssclAmount || '',
+        o.serviceCharge || '',
+        o.totalAmount || '',
+        o.refundAmount || '0.00'
+      ]);
+    });
+    const wsOrders = XLSX.utils.aoa_to_sheet(ordersData);
+    XLSX.utils.book_append_sheet(wb, wsOrders, 'Orders');
+
+    const refundsData = [
+      ['Order Number', 'Date', 'Customer Name', 'Phone', 'Reason', 'Refund Amount']
+    ];
+    refundedOrders.forEach(o => {
+      const log = refundLogs.find(l => l.orderNumber === (o.orderNumber || `#${o.id}`));
+      refundsData.push([
+        o.orderNumber || `#${o.id}`,
+        o.createdAt ? new Date(o.createdAt).toLocaleString() : '',
+        log?.customerName || '',
+        log?.customerPhone || '',
+        log?.reason || '',
+        o.refundAmount || o.totalAmount
+      ]);
+    });
+    const wsRefunds = XLSX.utils.aoa_to_sheet(refundsData);
+    XLSX.utils.book_append_sheet(wb, wsRefunds, 'Refunds');
+
+    XLSX.writeFile(wb, `Report_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  const tabBtn = (id: 'overview' | 'item-sales' | 'orders' | 'refunds', label: string) => (
+    <button
+      onClick={() => setActiveTab(id)}
+      className={`px-4 py-2 font-semibold text-sm rounded-lg transition-all ${
+        activeTab === id
+          ? 'bg-blue-600 text-white shadow'
+          : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
+      }`}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="p-6 min-h-full pb-20">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Shift Reports</h1>
+        <p className="text-gray-500 text-sm mt-1">Generate historical reports based on saved shifts or custom date ranges.</p>
+      </div>
+
+      <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 mb-8 flex flex-wrap items-end gap-4">
+        <div>
+          <label className="block text-xs font-semibold text-gray-600 mb-1">Filter Mode</label>
+          <select 
+            value={filterMode} 
+            onChange={(e) => setFilterMode(e.target.value as 'shift'|'custom')}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="shift">Past Shifts</option>
+            <option value="custom">Custom Date Range</option>
+          </select>
+        </div>
+
+        {filterMode === 'shift' && (
+          <div className="flex-1 min-w-[250px]">
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Select Shift</label>
+            <select 
+              value={selectedShiftId} 
+              onChange={(e) => setSelectedShiftId(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="" disabled>-- Choose a recorded shift --</option>
+              {pastShifts.map(s => {
+                const sDate = new Date(s.start);
+                const eDate = new Date(s.end);
+                return (
+                  <option key={s.id} value={s.id}>
+                    {sDate.toLocaleDateString()} ({sDate.toLocaleTimeString()} to {eDate.toLocaleTimeString()})
+                  </option>
+                );
+              })}
+            </select>
+            {pastShifts.length === 0 && <p className="text-xs text-amber-600 mt-1">No recorded shifts found yet. End a shift in the Dashboard to record one.</p>}
+          </div>
+        )}
+
+        {filterMode === 'custom' && (
+          <>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Start Date</label>
+              <input 
+                type="date" 
+                value={customStart} 
+                onChange={(e) => setCustomStart(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">End Date</label>
+              <input 
+                type="date" 
+                value={customEnd} 
+                onChange={(e) => setCustomEnd(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </>
+        )}
+
+        <button 
+          onClick={fetchReport}
+          disabled={isPending}
+          className="px-6 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50"
+        >
+          {isPending ? 'Generating...' : 'Generate Report'}
+        </button>
+      </div>
+
+      {stats && (
+        <>
+          <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
+            <div className="flex gap-2">
+              {tabBtn('overview', 'Analytics Overview')}
+              {tabBtn('item-sales', 'Item Sales')}
+              {tabBtn('orders', 'Order List')}
+              {tabBtn('refunds', 'Refunds')}
+            </div>
+            <button
+              onClick={handleExportExcel}
+              className="px-4 py-2 bg-gray-900 text-white font-semibold text-sm rounded-lg hover:bg-gray-800 transition-all shadow flex items-center gap-2"
+            >
+              <Download size={14} /> Export to Excel
+            </button>
+          </div>
+
+          {activeTab === 'overview' && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl shadow-lg p-6 text-white relative overflow-hidden">
+                  <div className="relative z-10">
+                    <p className="text-blue-100 font-medium text-sm flex items-center gap-2">
+                      <DollarSign size={16} /> Total Revenue
+                    </p>
+                    <h3 className="text-3xl font-bold mt-2">Rs. {s.totalAmount.toLocaleString()}</h3>
+                    <p className="text-blue-100 text-xs mt-2 flex items-center gap-1">
+                      (After refunds)
+                    </p>
+                  </div>
+                </div>
+                
+                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 relative overflow-hidden">
+                  <p className="text-gray-500 font-medium text-sm flex items-center gap-2">
+                    <ShoppingBag size={16} className="text-blue-500" /> Completed Orders
+                  </p>
+                  <h3 className="text-3xl font-bold text-gray-900 mt-2">{s.orderCount}</h3>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 relative overflow-hidden">
+                  <p className="text-gray-500 font-medium text-sm flex items-center gap-2">
+                    <Undo2 size={16} className="text-red-500" /> Refunds Issued
+                  </p>
+                  <h3 className="text-3xl font-bold text-gray-900 mt-2">{s.refundCount}</h3>
+                  <p className="text-red-500 text-xs mt-2 font-semibold">
+                    Rs. {s.refundAmount.toLocaleString()} refunded
+                  </p>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 relative overflow-hidden">
+                  <p className="text-gray-500 font-medium text-sm flex items-center gap-2">
+                    <TicketPercent size={16} className="text-purple-500" /> Taxes & Fees
+                  </p>
+                  <h3 className="text-xl font-bold text-gray-900 mt-2">
+                    <span className="text-sm text-gray-500 font-normal">VAT:</span> Rs. {(s.totalVAT || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </h3>
+                  <h3 className="text-xl font-bold text-gray-900 mt-1">
+                    <span className="text-sm text-gray-500 font-normal">SSCL:</span> Rs. {(s.totalSSCL || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </h3>
+                  <h3 className="text-xl font-bold text-gray-900 mt-1">
+                    <span className="text-sm text-gray-500 font-normal">SVC:</span> Rs. {(s.totalServiceCharge || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </h3>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+                  <h2 className="text-lg font-bold text-gray-900 mb-6 flex items-center gap-2">
+                    <Wallet className="text-blue-500" size={20} /> Payment Breakdown
+                  </h2>
+                  <div className="space-y-4">
+                    {Object.entries(s.paymentBreakdown).map(([method, amount]) => {
+                      let icon = <Banknote size={20} />;
+                      let bg = "bg-emerald-100 text-emerald-600";
+                      let title = method;
+                      let desc = "Payment";
+                      if (method.toLowerCase().includes('card')) {
+                        icon = <CreditCard size={20} />;
+                        bg = "bg-blue-100 text-blue-600";
+                        desc = "Credit / Debit";
+                      } else if (method.toLowerCase().includes('qr')) {
+                        icon = <QrCode size={20} />;
+                        bg = "bg-purple-100 text-purple-600";
+                        desc = "Digital Transfer";
+                      }
+
+                      return (
+                        <div key={method} className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${bg}`}>
+                              {icon}
+                            </div>
+                            <div>
+                              <p className="font-semibold text-gray-900">{title}</p>
+                              <p className="text-xs text-gray-500">{desc}</p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-bold text-gray-900">Rs. {Number(amount).toLocaleString()}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+                  <h2 className="text-lg font-bold text-gray-900 mb-6 flex items-center gap-2">
+                    <UtensilsCrossed className="text-orange-500" size={20} /> Order Types
+                  </h2>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center text-orange-600">
+                          <ShoppingBag size={20} />
+                        </div>
+                        <div>
+                          <p className="font-semibold text-gray-900">Takeaway Orders</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-bold text-gray-900">{s.typeBreakdown.Takeaway} Orders</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-teal-100 flex items-center justify-center text-teal-600">
+                          <UtensilsCrossed size={20} />
+                        </div>
+                        <div>
+                          <p className="font-semibold text-gray-900">Dine-in Orders</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-bold text-gray-900">{s.typeBreakdown.DineIn} Orders</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-cyan-100 flex items-center justify-center text-cyan-600">
+                          <PhoneCall size={20} />
+                        </div>
+                        <div>
+                          <p className="font-semibold text-gray-900">Online Orders</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-bold text-gray-900">{s.typeBreakdown.Online} Orders</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'item-sales' && (
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="p-5 border-b border-gray-100 bg-gray-50/50">
+                <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                  <BarChart2 size={18} className="text-blue-600" /> Item-wise Sales
+                </h2>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm text-gray-600">
+                  <thead className="bg-gray-50 border-b border-gray-100 text-gray-700">
+                    <tr>
+                      <th className="px-5 py-4 font-bold">Item Name</th>
+                      <th className="px-5 py-4 font-bold text-right">Quantity Sold</th>
+                      <th className="px-5 py-4 font-bold text-right">Total Revenue</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {s.itemSales && s.itemSales.length > 0 ? (
+                      s.itemSales.map((item: any, idx: number) => (
+                        <tr key={idx} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-5 py-3 font-semibold text-gray-900">{item.name}</td>
+                          <td className="px-5 py-3 text-right font-bold text-blue-600">{item.quantity}</td>
+                          <td className="px-5 py-3 text-right font-bold text-teal-600">Rs. {item.revenue.toFixed(2)}</td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={3} className="px-5 py-8 text-center text-gray-400">
+                          No items sold in this period.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'orders' && (
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="p-5 border-b border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-gray-50/50">
+                <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                  <History size={18} className="text-blue-600" /> Order List
+                </h2>
+                <div className="relative w-full sm:w-64">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                  <input
+                    type="text"
+                    placeholder="Search orders (ID, Type...)"
+                    className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm text-gray-600">
+                  <thead className="bg-gray-50 border-b border-gray-100 text-gray-700">
+                    <tr>
+                      <th className="px-5 py-4 font-bold">Order ID</th>
+                      <th className="px-5 py-4 font-bold">Time</th>
+                      <th className="px-5 py-4 font-bold">Type</th>
+                      <th className="px-5 py-4 font-bold">Payment</th>
+                      <th className="px-5 py-4 font-bold text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {filteredOrders.length > 0 ? filteredOrders.map(o => (
+                      <tr key={o.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-5 py-3 font-mono font-bold text-gray-900">
+                          {o.orderNumber || `#${o.id}`}
+                          {o.status === 'refunded' && <span className="ml-2 text-[10px] text-red-600 bg-red-100 px-1.5 py-0.5 rounded-full uppercase font-bold">Refunded</span>}
+                        </td>
+                        <td className="px-5 py-3">{o.createdAt ? new Date(o.createdAt).toLocaleString() : ''}</td>
+                        <td className="px-5 py-3">{o.orderType || 'Takeaway'}</td>
+                        <td className="px-5 py-3 font-semibold">{o.paymentMethod || 'Cash'}</td>
+                        <td className="px-5 py-3 text-right font-bold text-gray-900">Rs. {parseFloat(o.totalAmount).toLocaleString()}</td>
+                      </tr>
+                    )) : (
+                      <tr><td colSpan={5} className="px-5 py-8 text-center text-gray-400">No orders found.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'refunds' && (
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+                <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                  <Undo2 size={18} className="text-red-600" /> Refund History
+                </h2>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm text-gray-600">
+                  <thead className="bg-gray-50 border-b border-gray-100 text-gray-700">
+                    <tr>
+                      <th className="px-5 py-4 font-bold">Order ID & Details</th>
+                      <th className="px-5 py-4 font-bold">Time</th>
+                      <th className="px-5 py-4 font-bold">Type</th>
+                      <th className="px-5 py-4 font-bold">Total</th>
+                      <th className="px-5 py-4 font-bold text-right text-red-600">Refund Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {refundedOrders.length > 0 ? refundedOrders.map(o => {
+                      const log = refundLogs.find((l) => l.orderNumber === (o.orderNumber || `#${o.id}`));
+                      return (
+                      <tr key={o.id} className="hover:bg-red-50 transition-colors">
+                        <td className="px-5 py-3 font-mono text-gray-900">
+                          <div className="font-bold text-red-600 mb-1">{o.orderNumber || `#${o.id}`}</div>
+                          {log && (
+                            <div className="text-xs text-gray-500 space-y-0.5 mt-1">
+                              <p><span className="font-semibold text-gray-700">Customer:</span> {log.customerName || 'N/A'}</p>
+                              <p><span className="font-semibold text-gray-700">Phone:</span> {log.customerPhone || 'N/A'}</p>
+                              <p><span className="font-semibold text-gray-700">Reason:</span> {log.reason || 'N/A'}</p>
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-5 py-3 align-top">{o.createdAt ? new Date(o.createdAt).toLocaleString() : ''}</td>
+                        <td className="px-5 py-3 align-top">{o.orderType || 'Takeaway'}</td>
+                        <td className="px-5 py-3 font-semibold align-top">Rs. {parseFloat(o.totalAmount).toLocaleString()}</td>
+                        <td className="px-5 py-3 text-right font-bold text-red-600 align-top">Rs. {parseFloat(o.refundAmount || o.totalAmount).toLocaleString()}</td>
+                      </tr>
+                    )}) : (
+                      <tr><td colSpan={5} className="px-5 py-8 text-center text-gray-400">No refunds issued.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {!stats && !isPending && (
+        <div className="text-center py-20 text-gray-400 bg-white rounded-2xl border border-gray-200 border-dashed">
+          <Calendar size={48} className="mx-auto mb-4 opacity-30" />
+          <p className="text-lg">Select a shift or date range above to view the report.</p>
+        </div>
+      )}
+    </div>
+  );
+}

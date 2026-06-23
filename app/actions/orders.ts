@@ -263,10 +263,15 @@ export async function getDashboardStats() {
     const paymentBreakdown: Record<string, number> = {};
     const refunds: any[] = [];
     
-    // New fields
     let totalTax = 0;
+    let totalSSCL = 0;
+    let totalVAT = 0;
     let totalServiceCharge = 0;
     let totalDiscount = 0;
+
+    const { getServerConfig } = await import('@/app/actions/settings');
+    const config = await getServerConfig();
+    const ssclPct = parseFloat(String(config.ssclPercentage || '0'));
 
     for (const row of rawData) {
       const o = row.order;
@@ -288,6 +293,9 @@ export async function getDashboardStats() {
           if (refAmt < amt) {
               orderCount++;
               totalTax += oTax;
+              const sscl = (parseFloat(o.subtotal || '0') + oServ) * (ssclPct / 100);
+              totalSSCL += sscl;
+              totalVAT += (oTax > 0 ? oTax - sscl : 0);
               totalServiceCharge += oServ;
               totalDiscount += oDisc;
           }
@@ -300,7 +308,18 @@ export async function getDashboardStats() {
           else typeBreakdown.Takeaway++;
 
           const pm = o.paymentMethod || 'Unknown';
-          paymentBreakdown[pm] = (paymentBreakdown[pm] || 0) + amt;
+          if (pm.includes('|') || pm.includes(':')) {
+              const parts = pm.split('|');
+              for (const part of parts) {
+                  const [method, amountStr] = part.split(':');
+                  if (method && amountStr) {
+                      const splitAmt = parseFloat(amountStr);
+                      paymentBreakdown[method] = (paymentBreakdown[method] || 0) + splitAmt;
+                  }
+              }
+          } else {
+              paymentBreakdown[pm] = (paymentBreakdown[pm] || 0) + amt;
+          }
 
           if (refAmt > 0) {
               const rMethod = o.refundMethod || pm; 
@@ -335,6 +354,8 @@ export async function getDashboardStats() {
       totalAmount,
       orderCount,
       totalTax,
+      totalSSCL,
+      totalVAT,
       totalServiceCharge,
       totalDiscount,
       typeBreakdown,

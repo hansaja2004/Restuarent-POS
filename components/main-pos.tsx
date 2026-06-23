@@ -29,6 +29,7 @@ import {
 } from '@/lib/escpos';
 import { createFullOrder } from '@/app/actions/orders';
 import { toggleProductAvailability } from '@/app/actions/products';
+import { printToNetworkPrinter } from '@/app/actions/settings';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -131,6 +132,14 @@ export default function MainPos({
     setLocalProducts(products);
   }, [products]);
 
+  // ── Clock ────────────────────────────────────────────────────────────────────
+  const [currentTime, setCurrentTime] = useState<Date | null>(null);
+  useEffect(() => {
+    setCurrentTime(new Date());
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   // ── Tabs ─────────────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<'New' | 'Unpaid' | 'History'>('New');
 
@@ -170,6 +179,11 @@ export default function MainPos({
     if (serialPt) {
       try { await writeToWebSerial(serialPt, bytes); } catch { /* ignore */ }
     }
+    if (config.printerType === 'network') {
+      if (config.networkIp && config.networkPort) {
+        await printToNetworkPrinter(config.networkIp, config.networkPort, Array.from(bytes));
+      }
+    }
   };
 
   const handlePrint = async (order: any, isCopy = false, kickDrawer = false, isUnpaid = false) => {
@@ -205,6 +219,9 @@ export default function MainPos({
       } else if (config.printerType === 'webserial') {
         if (!activeSerialPort) return alert('No Serial printer paired. Go to Settings → Hardware.');
         await writeToWebSerial(activeSerialPort, bytes);
+      } else if (config.printerType === 'network') {
+        if (!config.networkIp || !config.networkPort) return alert('No network printer IP/Port configured. Go to Settings → Hardware.');
+        await printToNetworkPrinter(config.networkIp, config.networkPort, Array.from(bytes));
       }
     } catch (err: any) {
       alert(`Print failed: ${err.message}`);
@@ -390,10 +407,17 @@ export default function MainPos({
   const processPayment = async () => {
     let methodStr = '';
     const parts = [];
-    if (cashGiven > 0) parts.push(`Cash`);
-    if (cardGiven > 0) parts.push(`Card`);
-    if (qrGiven > 0) parts.push(`QR`);
-    methodStr = parts.join(' + ') || 'Cash';
+    if (cashGiven > 0) parts.push(`Cash:${Math.max(0, cashGiven - Math.max(changeDue, 0))}`);
+    if (cardGiven > 0) parts.push(`Card:${cardGiven}`);
+    if (qrGiven > 0) parts.push(`QR:${qrGiven}`);
+    
+    if (parts.length === 1) {
+      methodStr = parts[0].split(':')[0]; // Just the name if single payment
+    } else if (parts.length > 1) {
+      methodStr = parts.join('|'); // e.g. "Cash:1000|Card:1000"
+    } else {
+      methodStr = 'Cash';
+    }
 
     const totalCashInHand = cashGiven;
 
@@ -512,6 +536,10 @@ export default function MainPos({
       setActiveTab('New');
     }
 
+    if (refundForm.method === 'Cash') {
+      handleKickDrawer().catch(console.error);
+    }
+
     // Call server action to mark as refunded in DB
     if (selectedRefundOrder.dbId) {
       startTransition(async () => {
@@ -586,7 +614,7 @@ export default function MainPos({
         'Order Type': order.type,
         'Customer Type': order.isCustomerSelected ? 'Registered Customer' : 'Walk-in',
         'Items Summary': order.items.map((i) => `${i.name} (x${i.quantity})`).join(', '),
-        'Payment Method': order.paymentMethod || 'N/A',
+        'Payment Method': order.paymentMethod?.replace(/\|/g, ', ') || 'N/A',
         'Subtotal (Rs.)': subtotal,
         'Service Charge (Rs.)': sc,
         'SSCL (Rs.)': ssclAmt,
@@ -657,6 +685,14 @@ export default function MainPos({
               <CheckCircle size={14} /> History
             </button>
           </div>
+
+          {/* Clock */}
+          {currentTime && (
+            <div className="hidden sm:flex text-xs text-gray-500 font-semibold bg-gray-50 border border-gray-200 px-3 py-1.5 rounded-lg items-center gap-1.5">
+              <Clock size={14} className="text-teal-600" />
+              {currentTime.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}
+            </div>
+          )}
 
           {/* Drawer button */}
           <button
@@ -849,7 +885,7 @@ export default function MainPos({
                           : 'border-gray-200'
                       }`}
                     >
-                      <div>
+                      <div className="flex-1">
                         <h3 className="font-bold text-gray-900 flex items-center gap-2">
                           {order.orderNumber}
                           {order.status === 'Refunded' && (
@@ -859,7 +895,7 @@ export default function MainPos({
                           )}
                         </h3>
                         <p className="text-xs text-gray-500 mt-0.5">
-                          {order.type} • {order.paymentMethod} •{' '}
+                          {order.type}   {order.paymentMethod?.replace(/\|/g, ', ')}  {' '}
                           {new Date(order.timestamp).toLocaleString()}
                         </p>
                         <p className="text-sm text-gray-700 mt-2">
@@ -1091,12 +1127,14 @@ export default function MainPos({
                   placeholder="0.00"
                   value={paymentSplits.Cash}
                   onChange={(e) => setPaymentSplits({ ...paymentSplits, Cash: e.target.value })}
+                  onWheel={(e) => (e.target as HTMLElement).blur()}
                   autoFocus
                 />
+                <div className="w-16"></div>
               </div>
 
               {/* Quick Cash Amounts */}
-              <div className="grid grid-cols-4 gap-2 pl-24">
+              <div className="grid grid-cols-4 gap-2 pl-[104px] pr-[76px]">
                 {[500, 1000, 2000, 5000].map((amt) => (
                   <button
                     key={amt}
@@ -1120,7 +1158,23 @@ export default function MainPos({
                   placeholder="0.00"
                   value={paymentSplits.Card}
                   onChange={(e) => setPaymentSplits({ ...paymentSplits, Card: e.target.value })}
+                  onWheel={(e) => (e.target as HTMLElement).blur()}
                 />
+                <label className="flex items-center justify-end gap-1.5 text-sm font-semibold text-gray-600 cursor-pointer hover:text-teal-600 transition-colors w-16">
+                  <input
+                    type="checkbox"
+                    className="w-4 h-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500 cursor-pointer"
+                    checked={parseFloat(paymentSplits.Card || '0') === finalTotal && finalTotal > 0}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setPaymentSplits({ ...paymentSplits, Card: finalTotal.toFixed(2) });
+                      } else {
+                        setPaymentSplits({ ...paymentSplits, Card: '' });
+                      }
+                    }}
+                  />
+                  Total
+                </label>
               </div>
 
               <div className="flex items-center gap-3 mt-3">
@@ -1132,7 +1186,23 @@ export default function MainPos({
                   placeholder="0.00"
                   value={paymentSplits.QR}
                   onChange={(e) => setPaymentSplits({ ...paymentSplits, QR: e.target.value })}
+                  onWheel={(e) => (e.target as HTMLElement).blur()}
                 />
+                <label className="flex items-center justify-end gap-1.5 text-sm font-semibold text-gray-600 cursor-pointer hover:text-teal-600 transition-colors w-16">
+                  <input
+                    type="checkbox"
+                    className="w-4 h-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500 cursor-pointer"
+                    checked={parseFloat(paymentSplits.QR || '0') === finalTotal && finalTotal > 0}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setPaymentSplits({ ...paymentSplits, QR: finalTotal.toFixed(2) });
+                      } else {
+                        setPaymentSplits({ ...paymentSplits, QR: '' });
+                      }
+                    }}
+                  />
+                  Total
+                </label>
               </div>
 
               <div className="flex justify-between items-center pt-3 mt-3 border-t border-gray-200">
@@ -1271,6 +1341,7 @@ export default function MainPos({
                   <input
                     type="number"
                     step="0.01"
+                    onWheel={(e) => (e.target as HTMLElement).blur()}
                     max={selectedRefundOrder?.total}
                     className="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:outline-none focus:border-red-400 focus:ring-1 focus:ring-red-400 transition-all"
                     value={refundForm.amount}

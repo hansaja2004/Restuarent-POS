@@ -16,6 +16,8 @@ export const defaultConfig: TaxConfig = {
   waiterServiceCharge: 10.0,
   refundPin: '0000',
   printerType: 'mock',
+  networkIp: '192.168.1.100',
+  networkPort: 9100,
   paperWidth: '80mm',
   autoPrintReceipt: true,
   autoKickDrawer: true,

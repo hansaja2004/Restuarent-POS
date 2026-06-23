@@ -1,6 +1,7 @@
 'use server';
 
 import { db } from '@/lib/db';
+import net from 'net';
 import { posConfig, orders, orderItems } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { getSession } from '@/lib/auth';
@@ -60,18 +61,44 @@ export async function resetDashboardTime() {
 
   try {
     const key = 'dashboard_start_time';
-    const value = new Date().toISOString();
+    const newTime = new Date().toISOString();
     const existing = await db.query.posConfig.findFirst({
       where: eq(posConfig.key, key),
     });
 
+    // Record the past shift if there was an active one
+    if (existing && existing.value) {
+      const shiftStart = existing.value;
+      const shiftEnd = newTime;
+      
+      const shiftsKey = 'past_shifts';
+      const shiftsRow = await db.query.posConfig.findFirst({
+        where: eq(posConfig.key, shiftsKey),
+      });
+
+      const pastShifts = shiftsRow ? JSON.parse(shiftsRow.value) : [];
+      pastShifts.unshift({
+        id: Date.now().toString(),
+        start: shiftStart,
+        end: shiftEnd,
+      }); // unshift to keep newest first
+
+      const shiftsValue = JSON.stringify(pastShifts);
+      if (shiftsRow) {
+        await db.update(posConfig).set({ value: shiftsValue }).where(eq(posConfig.key, shiftsKey));
+      } else {
+        await db.insert(posConfig).values({ key: shiftsKey, value: shiftsValue });
+      }
+    }
+
     if (existing) {
-      await db.update(posConfig).set({ value }).where(eq(posConfig.key, key));
+      await db.update(posConfig).set({ value: newTime }).where(eq(posConfig.key, key));
     } else {
-      await db.insert(posConfig).values({ key, value });
+      await db.insert(posConfig).values({ key, value: newTime });
     }
 
     revalidatePath('/dashboard');
+    revalidatePath('/reports');
     return { success: true };
   } catch (err) {
     console.error('Failed to reset dashboard time:', err);
@@ -108,4 +135,28 @@ export async function wipeAllTransactions() {
     console.error('Failed to wipe transactions:', err);
     return { error: 'Failed to wipe transactions' };
   }
+}
+
+export async function printToNetworkPrinter(ip: string, port: number, bytes: number[]) {
+  return new Promise<{ success?: boolean; error?: string }>((resolve) => {
+    const client = new net.Socket();
+    client.setTimeout(5000);
+
+    client.connect(port, ip, () => {
+      client.write(Buffer.from(bytes), () => {
+        client.destroy();
+        resolve({ success: true });
+      });
+    });
+
+    client.on('error', (err) => {
+      client.destroy();
+      resolve({ error: err.message });
+    });
+
+    client.on('timeout', () => {
+      client.destroy();
+      resolve({ error: 'Connection timed out' });
+    });
+  });
 }

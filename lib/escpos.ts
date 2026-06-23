@@ -1,4 +1,4 @@
-// ESC/POS Command Builder and Web Transmission Library — Rubber Estate POS
+// ESC/POS Command Builder and Web Transmission Library â€” Rubber Estate POS
 // Ported from the original Vite project (src/lib/escpos.ts)
 
 class EscPosBuilder {
@@ -73,7 +73,9 @@ export interface TaxConfig {
   counterServiceCharge: number;
   waiterServiceCharge: number;
   refundPin: string;
-  printerType: 'mock' | 'webusb' | 'webserial' | 'browser';
+  printerType: 'mock' | 'webusb' | 'webserial' | 'browser' | 'network';
+  networkIp?: string;
+  networkPort?: number;
   paperWidth: '80mm' | '58mm';
   autoPrintReceipt: boolean;
   autoKickDrawer: boolean;
@@ -205,7 +207,15 @@ export const compileReceiptESC = (
     const qtyStr = item.quantity.toString();
     const priceStr = item.price.toFixed(0);
     const subStr = (item.price * item.quantity).toFixed(0);
-    const fullName = item.size && item.size !== 'Regular' ? `${item.name} (${item.size.charAt(0)})` : item.name;
+    let fullName = item.name.replace(/\(?\bSmall\b\)?/ig, '(S)')
+                            .replace(/\(?\bMedium\b\)?/ig, '(M)')
+                            .replace(/\(?\bLarge\b\)?/ig, '(L)');
+    if (item.size && item.size !== 'Regular') {
+      const sizeStr = `(${item.size.charAt(0).toUpperCase()})`;
+      if (!fullName.includes(sizeStr)) {
+        fullName += ` ${sizeStr}`;
+      }
+    }
 
     if (is80) {
       const name = fullName.substring(0, 24).padEnd(25, ' ');
@@ -279,7 +289,7 @@ export const compileReceiptESC = (
     builder.addLine(formatTotalLine('Change Due:    ', order.changeDue || 0));
     builder.addLine(lineChar.repeat(width));
   } else if (order.paymentMethod) {
-    builder.addLine(`Payment Method: ${order.paymentMethod}`);
+    builder.addLine(`Payment Method: ${order.paymentMethod.replace(/\|/g, ', ')}`);
     builder.addLine(lineChar.repeat(width));
   }
 
@@ -422,7 +432,15 @@ export const printHTMLReceipt = (
 
   let itemsHtml = '';
   order.items.forEach((item: any) => {
-    const fullName = item.size && item.size !== 'Regular' ? `${item.name} (${item.size})` : item.name;
+    let fullName = item.name.replace(/\(?\bSmall\b\)?/ig, '(S)')
+                            .replace(/\(?\bMedium\b\)?/ig, '(M)')
+                            .replace(/\(?\bLarge\b\)?/ig, '(L)');
+    if (item.size && item.size !== 'Regular') {
+      const sizeStr = `(${item.size.charAt(0).toUpperCase()})`;
+      if (!fullName.includes(sizeStr)) {
+        fullName += ` ${sizeStr}`;
+      }
+    }
     itemsHtml += `
       <div style="display:flex;justify-content:space-between;margin-bottom:2px;">
         <span style="flex:1;text-align:left;">${fullName} x${item.quantity}</span>
@@ -476,7 +494,7 @@ export const printHTMLReceipt = (
         <div>Change Due: Rs. ${(order.changeDue || 0).toFixed(2)}</div>
       </div>${divider}`
         : order.paymentMethod
-          ? `<div style="font-size:11px;text-align:right;"><div>Payment Method: ${order.paymentMethod}</div></div>${divider}`
+          ? `<div style="font-size:11px;text-align:right;"><div>Payment Method: ${order.paymentMethod.replace(/\|/g, ', ')}</div></div>${divider}`
           : ''
     }
     ${order.notes ? `<div style="font-size:11px;line-height:1.3;margin-bottom:4px;"><b>Notes / Instructions:</b><div style="font-style:italic;white-space:pre-wrap;margin-top:2px;">${order.notes}</div></div>${divider}` : ''}
@@ -484,6 +502,121 @@ export const printHTMLReceipt = (
       ${config.receiptFooter ? `<div>${config.receiptFooter}</div>` : '<div>THANK YOU FOR YOUR PATRONAGE!</div><div>Please come again.</div>'}
       ${config.receiptTaxRegNo ? `<div style="margin-top:4px;font-size:9px;color:#555;">Tax Reg No: ${config.receiptTaxRegNo}</div>` : ''}
       <div style="font-size:9px;color:#555;">Software: RubberEstatePOS v2.0</div>
+    </div>
+  `;
+
+  document.body.appendChild(printArea);
+  window.print();
+  document.body.removeChild(printArea);
+};
+export const compileSummaryESC = (stats: any, config: TaxConfig) => {
+  const builder = new EscPosBuilder();
+  builder.initialize();
+  const is80 = config.paperWidth === '80mm';
+  const width = is80 ? 48 : 32;
+  const lineChar = '-';
+
+  builder.alignCenter();
+  builder.boldOn();
+  builder.addLine(config.receiptName || 'DAILY SUMMARY REPORT');
+  builder.boldOff();
+  builder.addLine(`Date: ${new Date().toLocaleString()}`);
+  builder.addLine(lineChar.repeat(width));
+  builder.alignLeft();
+
+  const formatLine = (label: string, value: string) => {
+    const pad = width - label.length;
+    return `${label}${value.padStart(pad, ' ')}`;
+  };
+
+  builder.addLine(formatLine('Total Revenue:', `Rs. ${stats.totalAmount.toLocaleString()}`));
+  builder.addLine(formatLine('Total Orders:', stats.orderCount.toString()));
+  builder.addLine(formatLine('Total Refunds:', `Rs. ${stats.refundAmount.toLocaleString()}`));
+  builder.addLine(lineChar.repeat(width));
+  builder.addLine('PAYMENT METHODS:');
+  Object.entries(stats.paymentBreakdown).forEach(([method, amt]: [string, any]) => {
+    builder.addLine(formatLine(`  ${method}:`, `Rs. ${Number(amt).toLocaleString()}`));
+  });
+  builder.addLine(lineChar.repeat(width));
+  builder.addLine('TAX & FEES:');
+  builder.addLine(formatLine('  VAT:', `Rs. ${(stats.totalVAT || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`));
+  builder.addLine(formatLine('  SSCL:', `Rs. ${(stats.totalSSCL || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`));
+  builder.addLine(formatLine('  Service Chg:', `Rs. ${(stats.totalServiceCharge || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`));
+  builder.addLine(lineChar.repeat(width));
+  builder.addLine('ORDER TYPES:');
+  builder.addLine(formatLine('  Takeaway:', stats.typeBreakdown.Takeaway.toString()));
+  builder.addLine(formatLine('  Dine-In:', stats.typeBreakdown.DineIn.toString()));
+  builder.addLine(formatLine('  Online:', stats.typeBreakdown.Online.toString()));
+
+  builder.addLine(lineChar.repeat(width));
+  builder.alignCenter();
+  builder.addLine('END OF REPORT');
+  builder.feedAndCut();
+  return builder.build();
+};
+
+export const printHTMLSummary = (stats: any, config: TaxConfig) => {
+  const printArea = document.createElement('div');
+  printArea.id = 'thermal-receipt-print-area';
+  if (config.paperWidth === '58mm') {
+    printArea.classList.add('width-58mm');
+  }
+
+  let paymentHtml = '';
+  Object.entries(stats.paymentBreakdown).forEach(([method, amt]: [string, any]) => {
+    paymentHtml += `<div style="display:flex;justify-content:space-between;">
+      <span>${method}</span><span>Rs. ${Number(amt).toLocaleString()}</span>
+    </div>`;
+  });
+
+  printArea.innerHTML = `
+    <div style="font-family:monospace;font-size:12px;color:#000;background:#fff;padding:10px;">
+      <div style="text-align:center;font-weight:bold;font-size:14px;margin-bottom:5px;">
+        ${config.receiptName || 'DAILY SUMMARY REPORT'}
+      </div>
+      <div style="text-align:center;margin-bottom:10px;">Date: ${new Date().toLocaleString()}</div>
+      <hr style="border:1px dashed #000;margin:5px 0;" />
+      
+      <div style="display:flex;justify-content:space-between;font-weight:bold;">
+        <span>Total Revenue:</span><span>Rs. ${stats.totalAmount.toLocaleString()}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;">
+        <span>Total Orders:</span><span>${stats.orderCount}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;">
+        <span>Total Refunds:</span><span>Rs. ${stats.refundAmount.toLocaleString()}</span>
+      </div>
+      
+      <hr style="border:1px dashed #000;margin:5px 0;" />
+      <div style="font-weight:bold;margin-bottom:3px;">PAYMENT METHODS:</div>
+      ${paymentHtml}
+      
+      <hr style="border:1px dashed #000;margin:5px 0;" />
+      <div style="font-weight:bold;margin-bottom:3px;">TAX & FEES:</div>
+      <div style="display:flex;justify-content:space-between;">
+        <span>VAT:</span><span>Rs. ${(stats.totalVAT || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;">
+        <span>SSCL:</span><span>Rs. ${(stats.totalSSCL || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;">
+        <span>Service Chg:</span><span>Rs. ${(stats.totalServiceCharge || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+      </div>
+      
+      <hr style="border:1px dashed #000;margin:5px 0;" />
+      <div style="font-weight:bold;margin-bottom:3px;">ORDER TYPES:</div>
+      <div style="display:flex;justify-content:space-between;">
+        <span>Takeaway:</span><span>${stats.typeBreakdown.Takeaway}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;">
+        <span>Dine-In:</span><span>${stats.typeBreakdown.DineIn}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;">
+        <span>Online:</span><span>${stats.typeBreakdown.Online}</span>
+      </div>
+      
+      <hr style="border:1px dashed #000;margin:5px 0;" />
+      <div style="text-align:center;margin-top:10px;">END OF REPORT</div>
     </div>
   `;
 
