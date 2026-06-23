@@ -8,13 +8,10 @@ export async function middleware(request: NextRequest) {
 
   const session = token ? await verifyToken(token) : null;
 
-  // Protect /login route: if logged in, redirect to home
+  // Protect /login route: if logged in, redirect to pos/admin
   if (pathname === '/login') {
     if (session) {
-      if (session.role === 'admin') {
-        return NextResponse.redirect(new URL('/admin', request.url));
-      }
-      return NextResponse.redirect(new URL('/', request.url));
+      return NextResponse.redirect(new URL('/pos', request.url));
     }
     return NextResponse.next();
   }
@@ -28,17 +25,29 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Allow root landing page to be public
+  if (pathname === '/') {
+    return NextResponse.next();
+  }
+
   // If no session, redirect everything else to login
   if (!session) {
     return NextResponse.redirect(new URL('/login', request.url));
   }
 
-  // Admin route protection
-  if (pathname.startsWith('/admin')) {
-    if (session.role !== 'admin') {
-      return NextResponse.redirect(new URL('/', request.url));
-    }
+  // Route protection by role
+  const isCashierAllowed = pathname === '/pos' || pathname.startsWith('/dashboard');
+  const isManagerAllowed = !pathname.startsWith('/settings');
+
+  if (session.role === 'cashier' && !isCashierAllowed) {
+    return NextResponse.redirect(new URL('/pos', request.url));
   }
+
+  if (session.role === 'manager' && !isManagerAllowed) {
+    return NextResponse.redirect(new URL('/pos', request.url));
+  }
+
+
 
   return NextResponse.next();
 }

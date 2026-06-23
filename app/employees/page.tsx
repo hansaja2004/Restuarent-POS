@@ -1,12 +1,19 @@
 import Sidebar from '@/components/sidebar'
 import { getUsers, createUser, deleteUser } from '@/app/actions/employees'
+import { getSession } from '@/lib/auth';
+import { redirect } from 'next/navigation';
 
 export default async function EmployeesPage() {
+  const session = await getSession();
+  if (!session) {
+    redirect('/login');
+  }
+
   const users = await getUsers();
 
   return (
     <div className="flex h-screen bg-gray-100">
-      <Sidebar />
+      <Sidebar role={session.role} />
       <div className="flex-1 overflow-y-auto p-6">
         <h1 className="text-2xl font-bold mb-4">Employee Management</h1>
 
@@ -29,6 +36,7 @@ export default async function EmployeesPage() {
                 <label htmlFor="emp-role" className="block text-sm font-medium text-gray-700 mb-1">Role</label>
                 <select id="emp-role" name="role" className="w-full px-4 py-2 border border-gray-300 rounded-lg">
                   <option value="cashier">Cashier</option>
+                  <option value="manager">Manager</option>
                   <option value="admin">Admin</option>
                 </select>
               </div>

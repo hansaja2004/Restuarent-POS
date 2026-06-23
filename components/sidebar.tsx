@@ -5,21 +5,27 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { logout } from '@/app/actions/auth'
 
-export default function Sidebar() {
+export default function Sidebar({ role }: { role?: string }) {
   const router = useRouter()
 
   const [collapsed, setCollapsed] = useState(false)
 
+  const isManagerOrAdmin = role === 'manager' || role === 'admin'
+  const isAdmin = role === 'admin'
+
   const menuItems = [
     { icon: BarChart3, label: 'Dashboard', badge: null, href: '/dashboard' },
-    { icon: ShoppingCart, label: 'Point of Sale', badge: null, href: '/' },
-
-    { icon: Menu, label: 'Menu Management', badge: '8', href: '/menu' },
-    { icon: Grid3x3, label: 'Table &Floor Plan', badge: null, href: '/floor-plan' },
-    { icon: TrendingUp, label: 'Sales Reports', badge: null, href: '/reports' },
-    { icon: Package, label: 'Inventory Reports', badge: null, href: '/inventory' },
-    { icon: Users, label: 'Employee Management', badge: null, href: '/employees' },
+    { icon: ShoppingCart, label: 'Point of Sale', badge: null, href: '/pos' },
   ]
+
+  if (isManagerOrAdmin) {
+    menuItems.push(
+      { icon: Menu, label: 'Menu Management', badge: '8', href: '/menu' },
+      { icon: TrendingUp, label: 'Sales Reports', badge: null, href: '/reports' },
+      { icon: Package, label: 'Inventory Reports', badge: null, href: '/inventory' },
+      { icon: Users, label: 'Employee Management', badge: null, href: '/employees' }
+    )
+  }
 
   return (
     <div className={`bg-white border-r border-gray-200 flex flex-col h-screen transition-all duration-300 ${collapsed ? 'w-20' : 'w-64'}`}>
@@ -63,13 +69,15 @@ export default function Sidebar() {
 
       {/* Settings */}
       <div className="px-2 py-2 border-t border-gray-200 space-y-2">
-        <button
-          onClick={() => router.push('/settings')}
-          className="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-100 transition-colors"
-        >
-          <Settings size={20} className="text-gray-600" />
-          {!collapsed && <span className="text-sm text-gray-700">Settings</span>}
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => router.push('/settings')}
+            className="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-100 transition-colors"
+          >
+            <Settings size={20} className="text-gray-600" />
+            {!collapsed && <span className="text-sm text-gray-700">Settings</span>}
+          </button>
+        )}
 
         <button
           type="button"

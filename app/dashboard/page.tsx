@@ -17,7 +17,7 @@ export default async function DashboardPage() {
 
   return (
     <div className="flex h-screen bg-gray-100">
-      <Sidebar />
+      <Sidebar role={session.role} />
       <div className="flex-1 overflow-y-auto">
         <DashboardClient
           session={session}

@@ -1,27 +1,13 @@
-import Sidebar from '@/components/sidebar'
-import MainPos from '@/components/main-pos'
-import { getCategories, getProducts } from './actions/products'
-import { getOrders } from './actions/orders'
-import { getSession } from '@/lib/auth'
-import { redirect } from 'next/navigation'
+import LandingPageClient from '@/components/landing-page-client';
+import { getCategories, getProducts } from '@/app/actions/products';
 
-export default async function Page() {
-  const session = await getSession();
-  if (!session) {
-    redirect('/login');
-  }
+export const dynamic = 'force-dynamic'; // Ensure we get fresh menu data
 
-  const categories = await getCategories();
-  const products = await getProducts();
-  const globalOrders = await getOrders();
+export default async function LandingPage() {
+  const [categories, products] = await Promise.all([
+    getCategories(),
+    getProducts(),
+  ]);
 
-  return (
-    <div className="flex h-screen bg-gray-100">
-      {/* Sidebar */}
-      <Sidebar />
-
-      <MainPos products={products} categories={categories} session={session} globalOrders={globalOrders} />
-    </div>
-  )
+  return <LandingPageClient initialCategories={categories} initialProducts={products} />;
 }
-

@@ -18,7 +18,7 @@ export default function LoginPage() {
       setError(result.error);
       setIsLoading(false);
     } else if (result?.success) {
-      router.push('/');
+      router.push('/pos');
     }
   }
 
