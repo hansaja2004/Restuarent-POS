@@ -38,7 +38,21 @@ export async function getPastShifts() {
       where: eq(posConfig.key, 'past_shifts'),
     });
     if (row && row.value) {
-      return JSON.parse(row.value) as { id: string; start: string; end: string }[];
+      const allShifts = JSON.parse(row.value) as { id: string; start: string; end: string }[];
+      
+      const validShifts = [];
+      for (const shift of allShifts) {
+        const orderExists = await db.execute(sql`
+          SELECT 1 FROM orders 
+          WHERE created_at >= ${new Date(shift.start)} 
+          AND created_at <= ${new Date(shift.end)} 
+          LIMIT 1
+        `);
+        if (orderExists.rows.length > 0) {
+          validShifts.push(shift);
+        }
+      }
+      return validShifts;
     }
   } catch (err) {
     console.error('Failed to get past shifts:', err);
@@ -64,6 +78,7 @@ export async function getHistoricalDashboardStats(startTime: Date, endTime: Date
 
     const orderMap = new Map<number, any>();
     const itemSalesMap = new Map<string, { name: string; quantity: number; revenue: number }>();
+    const historyOrdersMap = new Map<number, any>();
 
     let totalAmount = 0;
     let orderCount = 0;
@@ -84,6 +99,19 @@ export async function getHistoricalDashboardStats(startTime: Date, endTime: Date
     for (const row of rawData) {
       const o = row.order;
       
+      if (!historyOrdersMap.has(o.id)) {
+        historyOrdersMap.set(o.id, { ...o, cartItems: [] });
+      }
+
+      if (row.item && row.product) {
+        historyOrdersMap.get(o.id).cartItems.push({
+          name: row.product.name,
+          quantity: row.item.quantity,
+          price: parseFloat(row.item.price),
+          size: row.item.size
+        });
+      }
+
       if (!orderMap.has(o.id)) {
         orderMap.set(o.id, true);
         
@@ -129,7 +157,18 @@ export async function getHistoricalDashboardStats(startTime: Date, endTime: Date
 
           if (refAmt > 0) {
               const rMethod = o.refundMethod || pm; 
-              paymentBreakdown[rMethod] = (paymentBreakdown[rMethod] || 0) - refAmt;
+              if (rMethod.includes('|') || rMethod.includes(':')) {
+                  const parts = rMethod.split('|');
+                  for (const part of parts) {
+                      const [method, amountStr] = part.split(':');
+                      if (method && amountStr) {
+                          const splitAmt = parseFloat(amountStr);
+                          paymentBreakdown[method] = (paymentBreakdown[method] || 0) - splitAmt;
+                      }
+                  }
+              } else {
+                  paymentBreakdown[rMethod] = (paymentBreakdown[rMethod] || 0) - refAmt;
+              }
               refunds.push(o);
           }
         }
@@ -153,7 +192,7 @@ export async function getHistoricalDashboardStats(startTime: Date, endTime: Date
     const itemSales = Array.from(itemSalesMap.values()).sort((a, b) => b.quantity - a.quantity);
 
     // Also get the list of orders to display in the Daily Order List equivalent
-    const historyOrders = Array.from(new Map(rawData.map(r => [r.order.id, r.order])).values()).sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+    const historyOrders = Array.from(historyOrdersMap.values()).sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
 
     return {
       stats: {

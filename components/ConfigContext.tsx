@@ -29,8 +29,46 @@ export const defaultConfig: TaxConfig = {
   receiptPhone: '+94 11 234 5678',
   receiptFooter: 'THANK YOU FOR YOUR PATRONAGE! Please come again.',
   receiptTaxRegNo: 'LKE-8492048',
-  enableServiceCharge: false,
-  enableSSCL: false,
+  enableServiceCharge_Takeaway: false,
+  enableServiceCharge_DineIn: false,
+  enableServiceCharge_Online: false,
+  enableSSCL_Takeaway: false,
+  enableSSCL_DineIn: false,
+  enableSSCL_Online: false,
+  enableVAT_Takeaway: false,
+  enableVAT_DineIn: false,
+  enableVAT_Online: false,
+  landingActivities: [
+    {
+      title: 'Lakeside Trails',
+      description: 'Scenic walking paths around the pristine lake with stunning water views and natural ecosystems to explore.',
+      image: '/activity-lakeside.png',
+    },
+    {
+      title: 'Recreational Areas',
+      description: 'Family-friendly spaces with recreational activities, perfect for groups and celebrations in nature.',
+      image: '/activity-playground.png',
+    },
+    {
+      title: 'Botanical Gardens',
+      description: 'Beautiful gardens showcasing rare plants and horticultural wonders throughout the park.',
+      image: '/activity-botanical.png',
+    },
+  ],
+  landingGallery: [
+    { src: '/gallery-cocktail.png', alt: 'Elegant cocktail', size: 'large' },
+    { src: '/gallery-park.png', alt: 'Park landscape', size: 'medium' },
+    { src: '/gallery-people.png', alt: 'People dining', size: 'medium' },
+    { src: '/gallery-sunset.png', alt: 'Sunset over park', size: 'large' },
+    { src: '/featured-dish.png', alt: 'Gourmet dish', size: 'medium' },
+    { src: '/hero-split.png', alt: 'Park bistro scene', size: 'medium' },
+  ],
+  landingHoursList: [
+    { label: 'Monday - Sunday', hours: '10:00 AM - 10:00 PM' }
+  ],
+  landingHoursBanner: 'All days 10.a.m to 10 p.m',
+  autoOpenTime: '10:00',
+  autoCloseTime: '22:00',
 };
 
 const ConfigContext = createContext<ConfigContextType | undefined>(undefined);

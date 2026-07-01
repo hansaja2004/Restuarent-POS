@@ -24,6 +24,8 @@ import {
   getDrawerKickBytes,
   printHTMLReceipt,
   generateEscPosImage,
+  compileShortcutsESC,
+  printHTMLShortcuts,
 } from '@/lib/escpos';
 import type { TaxConfig } from '@/lib/escpos';
 import { useConfig, defaultConfig as libDefaultConfig } from '@/components/ConfigContext';
@@ -74,6 +76,52 @@ const compressImageToBase64 = (file: File): Promise<string> =>
     reader.readAsDataURL(file);
   });
 
+const compressHeroImageToBase64 = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const maxDim = 1920;
+        const scale = Math.min(maxDim / img.width, maxDim / img.height, 1);
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return reject('Canvas unavailable');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
+      };
+      img.onerror = reject;
+      img.src = ev.target?.result as string;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
+const compressWebImageToBase64 = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const maxDim = 1200;
+        const scale = Math.min(maxDim / img.width, maxDim / img.height, 1);
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return reject('Canvas unavailable');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
+      };
+      img.onerror = reject;
+      img.src = ev.target?.result as string;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
 // ── Role badge colors ──────────────────────────────────────────────────────────
 
 const roleBadge = (role: string) => {
@@ -88,6 +136,8 @@ const roleBadge = (role: string) => {
 
 // ── Main Component ─────────────────────────────────────────────────────────────
 
+
+
 export default function SettingsClient({
   session,
   initialUsers,
@@ -101,7 +151,7 @@ export default function SettingsClient({
   const isManagerOrAbove = ['admin', 'manager', 'director'].includes(session.role);
 
   // ── Tab State ────────────────────────────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState<'general' | 'hardware' | 'menu' | 'users'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'hardware' | 'menu' | 'users' | 'landing'>('general');
 
   // ── Status Message ───────────────────────────────────────────────────────────
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
@@ -200,6 +250,29 @@ export default function SettingsClient({
       }
     } catch (err: any) {
       alert('Print Test Failed: ' + err.message);
+    }
+  };
+
+  const handlePrintShortcuts = async () => {
+    try {
+      if (taxForm.printerType === 'mock') {
+        alert('Printer is in MOCK/DEMO mode. Shortcuts printed (simulated)!');
+      } else if (taxForm.printerType === 'browser') {
+        printHTMLShortcuts(taxForm);
+      } else if (taxForm.printerType === 'webusb') {
+        if (!pairedUsbDevice) return alert("Click 'Pair USB Printer' first!");
+        const bytes = compileShortcutsESC(taxForm);
+        await writeToWebUSB(pairedUsbDevice, bytes);
+        showMessage('USB POS Shortcuts sent successfully!');
+      } else if (taxForm.printerType === 'network') {
+        if (!taxForm.networkIp || !taxForm.networkPort) return alert('Configure Network IP and Port first!');
+        const bytes = compileShortcutsESC(taxForm);
+        const res = await printToNetworkPrinter(taxForm.networkIp, taxForm.networkPort, Array.from(bytes));
+        if (res.error) throw new Error(res.error);
+        showMessage('Network POS Shortcuts sent successfully!');
+      }
+    } catch (err: any) {
+      alert('Print Shortcuts Failed: ' + err.message);
     }
   };
 
@@ -413,6 +486,11 @@ export default function SettingsClient({
             <Users size={16} /> User Management
           </button>
         )}
+        {isManagerOrAbove && (
+          <button type="button" className={tabBtn('landing')} onClick={() => setActiveTab('landing')}>
+            <BookOpen size={16} /> Manage Landing Page
+          </button>
+        )}
       </div>
 
       {/* ════════════════════════════════════════════════════════════════════════
@@ -427,72 +505,91 @@ export default function SettingsClient({
                 <Sliders size={18} className="text-teal-600" /> Global Tax &amp; Service Rates
               </h2>
               <form onSubmit={handleSaveConfig} className="space-y-4">
-                {/* Toggles */}
-                <div className="bg-gray-50 p-3 rounded-lg border border-gray-200 space-y-2">
-                  {[
-                    { key: 'enableServiceCharge', label: 'Enable Service Charges' },
-                    { key: 'enableSSCL', label: 'Enable SSCL Charge' },
-                  ].map(({ key, label }) => (
-                    <label key={key} className="flex items-center gap-2 cursor-pointer text-sm font-medium text-gray-700">
-                      <input
-                        type="checkbox"
-                        className="rounded"
-                        checked={taxForm[key as keyof TaxConfig] as boolean}
-                        onChange={(e) => setTaxForm({ ...taxForm, [key]: e.target.checked })}
-                      />
-                      {label}
-                    </label>
-                  ))}
+                {/* Mode-Specific Toggles */}
+                <div className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm">
+                  <table className="w-full text-sm text-left">
+                    <thead className="bg-gray-50 border-b border-gray-200">
+                      <tr>
+                        <th className="px-4 py-2 font-semibold text-gray-700">Order Mode</th>
+                        <th className="px-4 py-2 font-semibold text-gray-700 text-center">Service Charge</th>
+                        <th className="px-4 py-2 font-semibold text-gray-700 text-center">SSCL</th>
+                        <th className="px-4 py-2 font-semibold text-gray-700 text-center">VAT</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {[
+                        { label: 'Dine In', sc: 'enableServiceCharge_DineIn', sscl: 'enableSSCL_DineIn', vat: 'enableVAT_DineIn' },
+                        { label: 'Takeaway', sc: 'enableServiceCharge_Takeaway', sscl: 'enableSSCL_Takeaway', vat: 'enableVAT_Takeaway' },
+                        { label: 'Online', sc: 'enableServiceCharge_Online', sscl: 'enableSSCL_Online', vat: 'enableVAT_Online' },
+                      ].map((mode) => (
+                        <tr key={mode.label}>
+                          <td className="px-4 py-2 font-medium text-gray-900">{mode.label}</td>
+                          <td className="px-4 py-2 text-center">
+                            <input type="checkbox" className="rounded text-teal-600 focus:ring-teal-500" checked={!!taxForm[mode.sc as keyof TaxConfig]} onChange={(e) => setTaxForm({ ...taxForm, [mode.sc]: e.target.checked })} />
+                          </td>
+                          <td className="px-4 py-2 text-center">
+                            <input type="checkbox" className="rounded text-teal-600 focus:ring-teal-500" checked={!!taxForm[mode.sscl as keyof TaxConfig]} onChange={(e) => setTaxForm({ ...taxForm, [mode.sscl]: e.target.checked })} />
+                          </td>
+                          <td className="px-4 py-2 text-center">
+                            <input type="checkbox" className="rounded text-teal-600 focus:ring-teal-500" checked={!!taxForm[mode.vat as keyof TaxConfig]} onChange={(e) => setTaxForm({ ...taxForm, [mode.vat]: e.target.checked })} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
 
+                {/* Percentage Settings */}
                 <div className="grid grid-cols-2 gap-4">
-                  {taxForm.enableSSCL && (
-                    <div className="col-span-2">
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">SSCL (%)</label>
+                  <div className="col-span-2 sm:col-span-1">
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">SSCL (%)</label>
+                    <input type="number" step="0.1" className={inp} value={taxForm.ssclPercentage} onChange={(e) => setTaxForm({ ...taxForm, ssclPercentage: parseFloat(e.target.value) })} />
+                  </div>
+                  <div className="col-span-2 sm:col-span-1">
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">VAT (%)</label>
+                    <input type="number" step="0.1" className={inp} value={taxForm.vatPercentage} onChange={(e) => setTaxForm({ ...taxForm, vatPercentage: parseFloat(e.target.value) })} />
+                  </div>
+                  <div className="col-span-2 sm:col-span-1">
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Counter Service Charge (%)</label>
+                    <input type="number" step="0.1" className={inp} value={taxForm.counterServiceCharge} onChange={(e) => setTaxForm({ ...taxForm, counterServiceCharge: parseFloat(e.target.value) })} />
+                  </div>
+                  <div className="col-span-2 sm:col-span-1">
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Waiter Service Charge (%)</label>
+                    <input type="number" step="0.1" className={inp} value={taxForm.waiterServiceCharge} onChange={(e) => setTaxForm({ ...taxForm, waiterServiceCharge: parseFloat(e.target.value) })} />
+                  </div>
+                </div>
+
+                {/* Customer Loyalty / Discount */}
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mt-6">
+                  <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
+                    <Users size={16} className="text-teal-600" /> Customer Discount Program
+                  </h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="col-span-2 sm:col-span-1 flex items-center">
+                      <label className="flex items-center gap-2 cursor-pointer text-sm font-medium text-gray-700">
+                        <input
+                          type="checkbox"
+                          className="rounded text-teal-600 focus:ring-teal-500 w-4 h-4"
+                          checked={!!taxForm.enableCustomerDiscount}
+                          onChange={(e) => setTaxForm({ ...taxForm, enableCustomerDiscount: e.target.checked })}
+                        />
+                        Enable Customer Discount
+                      </label>
+                    </div>
+                    <div className="col-span-2 sm:col-span-1">
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">Discount Amount (Rs.)</label>
                       <input
                         type="number"
-                        step="0.1"
+                        step="1"
                         className={inp}
-                        value={taxForm.ssclPercentage}
-                        onChange={(e) => setTaxForm({ ...taxForm, ssclPercentage: parseFloat(e.target.value) })}
+                        value={taxForm.customerDiscountAmount || 0}
+                        onChange={(e) => setTaxForm({ ...taxForm, customerDiscountAmount: parseFloat(e.target.value) })}
+                        disabled={!taxForm.enableCustomerDiscount}
                       />
                     </div>
-                  )}
-                  <div className="col-span-2">
-                    <label className="block text-xs font-semibold text-gray-600 mb-1">VAT (%)</label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      className={inp}
-                      value={taxForm.vatPercentage}
-                      onChange={(e) => setTaxForm({ ...taxForm, vatPercentage: parseFloat(e.target.value) })}
-                    />
                   </div>
-                  {taxForm.enableServiceCharge && (
-                    <>
-                      <div>
-                        <label className="block text-xs font-semibold text-gray-600 mb-1">Counter Service Charge (%)</label>
-                        <input
-                          type="number"
-                          step="0.1"
-                          className={inp}
-                          value={taxForm.counterServiceCharge}
-                          onChange={(e) => setTaxForm({ ...taxForm, counterServiceCharge: parseFloat(e.target.value) })}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-gray-600 mb-1">Waiter Service Charge (%)</label>
-                        <input
-                          type="number"
-                          step="0.1"
-                          className={inp}
-                          value={taxForm.waiterServiceCharge}
-                          onChange={(e) => setTaxForm({ ...taxForm, waiterServiceCharge: parseFloat(e.target.value) })}
-                        />
-                      </div>
-                    </>
-                  )}
                 </div>
+
                 <button
                   type="submit"
                   disabled={isPending}
@@ -783,6 +880,13 @@ export default function SettingsClient({
                 </button>
                 <button
                   type="button"
+                  onClick={handlePrintShortcuts}
+                  className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-2 rounded-lg text-sm transition-all"
+                >
+                  Print POS Shortcuts
+                </button>
+                <button
+                  type="button"
                   onClick={handleTestDrawer}
                   className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-2 rounded-lg text-sm transition-all"
                 >
@@ -1031,6 +1135,340 @@ export default function SettingsClient({
                 </button>
               </form>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ════════════════════════════════════════════════════════════════════════
+          TAB 5 — Landing Page Management
+      ════════════════════════════════════════════════════════════════════════ */}
+      {activeTab === 'landing' && isManagerOrAbove && (
+        <div className="max-w-3xl mx-auto">
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+            <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+              <BookOpen size={18} className="text-teal-600" /> Landing Page Settings
+            </h2>
+            <form onSubmit={handleSaveConfig} className="space-y-4">
+              <div className="grid grid-cols-1 gap-8">
+                {/* Store Status / Banner */}
+                <div className="space-y-4">
+                  <h3 className="font-semibold text-gray-700 text-sm border-b pb-2">1. Header & Status</h3>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Store Status Override</label>
+                    <select
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all bg-white"
+                      value={taxForm.storeStatusOverride || 'auto'}
+                      onChange={(e) => setTaxForm({ ...taxForm, storeStatusOverride: e.target.value as any })}
+                    >
+                      <option value="auto">Auto (Based on schedule below)</option>
+                      <option value="open">Force Open</option>
+                      <option value="closed">Force Closed</option>
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">Controls the pulsing "We are Open / Closed" badge.</p>
+                  </div>
+                  {(!taxForm.storeStatusOverride || taxForm.storeStatusOverride === 'auto') && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 mb-1">Auto Open Time</label>
+                        <input
+                          type="time"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all bg-white"
+                          value={taxForm.autoOpenTime ?? '10:00'}
+                          onChange={(e) => setTaxForm({ ...taxForm, autoOpenTime: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 mb-1">Auto Close Time</label>
+                        <input
+                          type="time"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all bg-white"
+                          value={taxForm.autoCloseTime ?? '22:00'}
+                          onChange={(e) => setTaxForm({ ...taxForm, autoCloseTime: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Hero Background Image</label>
+                    <div className="flex items-center gap-4">
+                      {taxForm.landingHeroImage && (
+                        <img src={taxForm.landingHeroImage} alt="Hero Preview" className="w-24 h-16 object-cover rounded border border-gray-200 shadow-sm" />
+                      )}
+                      <div className="flex-1">
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="w-full text-xs"
+                          onChange={async (e) => {
+                            const f = e.target.files?.[0];
+                            if (!f) return;
+                            try {
+                              const b64 = await compressHeroImageToBase64(f);
+                              setTaxForm({ ...taxForm, landingHeroImage: b64 });
+                            } catch {
+                              showMessage('Hero image compression failed.', 'error');
+                            }
+                          }}
+                        />
+                        <p className="text-xs text-gray-400 mt-1">Leaves empty to use default photo.</p>
+                        {taxForm.landingHeroImage && (
+                          <button
+                            type="button"
+                            onClick={() => setTaxForm({ ...taxForm, landingHeroImage: undefined })}
+                            className="text-xs text-red-500 hover:text-red-700 mt-2 block"
+                          >
+                            Remove Custom Hero Image
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Status Banner Text</label>
+                    <input
+                      type="text"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all bg-white"
+                      placeholder="e.g. All days 10.a.m to 10 p.m"
+                      value={taxForm.landingHoursBanner || ''}
+                      onChange={(e) => setTaxForm({ ...taxForm, landingHoursBanner: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                {/* Opening Hours List */}
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center border-b pb-2">
+                    <h3 className="font-semibold text-gray-700 text-sm">2. Opening Hours (Contact Section)</h3>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const cur = taxForm.landingHoursList || [];
+                        setTaxForm({ ...taxForm, landingHoursList: [...cur, { label: '', hours: '' }] });
+                      }}
+                      className="text-xs flex items-center gap-1 text-teal-600 hover:text-teal-800"
+                    >
+                      <Plus size={14} /> Add Row
+                    </button>
+                  </div>
+                  {(taxForm.landingHoursList || []).map((hr, i) => (
+                    <div key={i} className="flex gap-2 items-center">
+                      <input
+                        type="text"
+                        placeholder="e.g. Monday - Friday"
+                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                        value={hr.label}
+                        onChange={(e) => {
+                          const arr = [...(taxForm.landingHoursList || [])];
+                          arr[i].label = e.target.value;
+                          setTaxForm({ ...taxForm, landingHoursList: arr });
+                        }}
+                      />
+                      <input
+                        type="text"
+                        placeholder="e.g. 10:00 AM - 10:00 PM"
+                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                        value={hr.hours}
+                        onChange={(e) => {
+                          const arr = [...(taxForm.landingHoursList || [])];
+                          arr[i].hours = e.target.value;
+                          setTaxForm({ ...taxForm, landingHoursList: arr });
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const arr = [...(taxForm.landingHoursList || [])];
+                          arr.splice(i, 1);
+                          setTaxForm({ ...taxForm, landingHoursList: arr });
+                        }}
+                        className="p-2 text-red-500 hover:bg-red-50 rounded"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  ))}
+                  {(!taxForm.landingHoursList || taxForm.landingHoursList.length === 0) && (
+                    <p className="text-xs text-gray-400 italic">Using default hours. Click "Add Row" to override.</p>
+                  )}
+                </div>
+
+                {/* Activities */}
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center border-b pb-2">
+                    <h3 className="font-semibold text-gray-700 text-sm">3. Park Activities</h3>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const cur = taxForm.landingActivities || [];
+                        setTaxForm({ ...taxForm, landingActivities: [...cur, { title: '', description: '', image: '' }] });
+                      }}
+                      className="text-xs flex items-center gap-1 text-teal-600 hover:text-teal-800"
+                    >
+                      <Plus size={14} /> Add Activity
+                    </button>
+                  </div>
+                  {(taxForm.landingActivities || []).map((act, i) => (
+                    <div key={i} className="p-3 border border-gray-200 rounded-lg space-y-3 bg-gray-50 relative">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const arr = [...(taxForm.landingActivities || [])];
+                          arr.splice(i, 1);
+                          setTaxForm({ ...taxForm, landingActivities: arr });
+                        }}
+                        className="absolute top-3 right-3 text-red-500 hover:text-red-700"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 mb-1">Title</label>
+                        <input
+                          type="text"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                          value={act.title}
+                          onChange={(e) => {
+                            const arr = [...(taxForm.landingActivities || [])];
+                            arr[i].title = e.target.value;
+                            setTaxForm({ ...taxForm, landingActivities: arr });
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 mb-1">Description</label>
+                        <textarea
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white min-h-[60px]"
+                          value={act.description}
+                          onChange={(e) => {
+                            const arr = [...(taxForm.landingActivities || [])];
+                            arr[i].description = e.target.value;
+                            setTaxForm({ ...taxForm, landingActivities: arr });
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 mb-1">Image</label>
+                        <div className="flex items-center gap-3">
+                          {act.image && (
+                            <img src={act.image} alt="Preview" className="w-16 h-16 object-cover rounded shadow-sm" />
+                          )}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="text-xs"
+                            onChange={async (e) => {
+                              const f = e.target.files?.[0];
+                              if (!f) return;
+                              try {
+                                const b64 = await compressWebImageToBase64(f);
+                                const arr = [...(taxForm.landingActivities || [])];
+                                arr[i].image = b64;
+                                setTaxForm({ ...taxForm, landingActivities: arr });
+                              } catch {
+                                showMessage('Image compression failed.', 'error');
+                              }
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {(!taxForm.landingActivities || taxForm.landingActivities.length === 0) && (
+                    <p className="text-xs text-gray-400 italic">Using default activities. Click "Add Activity" to override.</p>
+                  )}
+                </div>
+
+                {/* Gallery */}
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center border-b pb-2">
+                    <h3 className="font-semibold text-gray-700 text-sm">4. Gallery Photos</h3>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const cur = taxForm.landingGallery || [];
+                        setTaxForm({ ...taxForm, landingGallery: [...cur, { src: '', alt: '', size: 'medium' }] });
+                      }}
+                      className="text-xs flex items-center gap-1 text-teal-600 hover:text-teal-800"
+                    >
+                      <Plus size={14} /> Add Photo
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {(taxForm.landingGallery || []).map((img, i) => (
+                      <div key={i} className="p-3 border border-gray-200 rounded-lg space-y-3 bg-gray-50 relative">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const arr = [...(taxForm.landingGallery || [])];
+                            arr.splice(i, 1);
+                            setTaxForm({ ...taxForm, landingGallery: arr });
+                          }}
+                          className="absolute top-2 right-2 p-1 bg-white rounded-full text-red-500 hover:text-red-700 shadow-sm"
+                        >
+                          <X size={14} />
+                        </button>
+                        <div className="flex flex-col gap-2">
+                          {img.src ? (
+                            <img src={img.src} alt="Preview" className="w-full h-24 object-cover rounded shadow-sm border border-gray-200" />
+                          ) : (
+                            <div className="w-full h-24 bg-gray-200 rounded flex items-center justify-center text-xs text-gray-400">No Image</div>
+                          )}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="text-xs w-full"
+                            onChange={async (e) => {
+                              const f = e.target.files?.[0];
+                              if (!f) return;
+                              try {
+                                const b64 = await compressWebImageToBase64(f);
+                                const arr = [...(taxForm.landingGallery || [])];
+                                arr[i].src = b64;
+                                setTaxForm({ ...taxForm, landingGallery: arr });
+                              } catch {
+                                showMessage('Image compression failed.', 'error');
+                              }
+                            }}
+                          />
+                        </div>
+                        <input
+                          type="text"
+                          placeholder="Alt text (e.g. Park landscape)"
+                          className="w-full px-2 py-1 border border-gray-300 rounded text-xs bg-white"
+                          value={img.alt}
+                          onChange={(e) => {
+                            const arr = [...(taxForm.landingGallery || [])];
+                            arr[i].alt = e.target.value;
+                            setTaxForm({ ...taxForm, landingGallery: arr });
+                          }}
+                        />
+                        <select
+                          className="w-full px-2 py-1 border border-gray-300 rounded text-xs bg-white"
+                          value={img.size}
+                          onChange={(e) => {
+                            const arr = [...(taxForm.landingGallery || [])];
+                            arr[i].size = e.target.value as 'large' | 'medium';
+                            setTaxForm({ ...taxForm, landingGallery: arr });
+                          }}
+                        >
+                          <option value="medium">Medium Size Tile</option>
+                          <option value="large">Large Size Tile</option>
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                  {(!taxForm.landingGallery || taxForm.landingGallery.length === 0) && (
+                    <p className="text-xs text-gray-400 italic">Using default gallery images. Click "Add Photo" to override.</p>
+                  )}
+                </div>
+              </div>
+              <button
+                type="submit"
+                disabled={isPending}
+                className="w-full bg-teal-600 hover:bg-teal-700 text-white font-bold py-2.5 rounded-lg transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                <Save size={16} /> Save Landing Page Settings
+              </button>
+            </form>
           </div>
         </div>
       )}

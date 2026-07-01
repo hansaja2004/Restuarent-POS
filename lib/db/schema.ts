@@ -46,6 +46,7 @@ export const orders = pgTable('orders', {
   paymentMethod: text('payment_method'), // Cash, Card, QR, etc.
   refundAmount: numeric('refund_amount', { precision: 10, scale: 2 }),
   refundMethod: text('refund_method'), // Cash, Card, Exchange
+  customerId: integer('customer_id'),
   createdAt: timestamp('created_at').defaultNow(),
 });
 
@@ -56,4 +57,12 @@ export const orderItems = pgTable('order_items', {
   size: text('size'),
   quantity: integer('quantity').notNull(),
   price: numeric('price', { precision: 10, scale: 2 }).notNull(),
+});
+
+export const customers = pgTable('customers', {
+  id: serial('id').primaryKey(),
+  name: text('name'),
+  phone: text('phone').notNull().unique(),
+  email: text('email').unique(),
+  createdAt: timestamp('created_at').defaultNow(),
 });

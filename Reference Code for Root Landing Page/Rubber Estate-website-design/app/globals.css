@@ -5,9 +5,9 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --font-heading: var(--font-sans);
-  --font-sans: var(--font-geist-sans), 'Geist Fallback';
-  --font-mono: var(--font-geist-mono), 'Geist Mono Fallback';
+  --font-heading: var(--font-cormorant), 'Cormorant Garamond', serif;
+  --font-sans: var(--font-plus-jakarta), 'Plus Jakarta Sans', sans-serif;
+  --font-mono: var(--font-plus-jakarta), 'Plus Jakarta Sans', sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -50,38 +50,38 @@
 
 :root {
   color-scheme: light;
-  --background: #fafbf8;
-  --foreground: #0f1710;
-  --card: #ffffff;
-  --card-foreground: #0f1710;
-  --popover: #ffffff;
-  --popover-foreground: #0f1710;
-  --primary: #0d472a;
-  --primary-foreground: #ffffff;
-  --secondary: #f1f5f0;
-  --secondary-foreground: #0d472a;
-  --muted: #dce4db;
-  --muted-foreground: #5a6b62;
-  --accent: #2a9d8f;
-  --accent-foreground: #ffffff;
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: #d4e0d9;
-  --input: #f5f7f4;
-  --ring: #2a9d8f;
-  --chart-1: #0d472a;
-  --chart-2: #2a9d8f;
-  --chart-3: #45b39e;
-  --chart-4: #6bc5b8;
-  --chart-5: #94d8cd;
-  --radius: 0.625rem;
-  --sidebar: #0d472a;
-  --sidebar-foreground: #ffffff;
-  --sidebar-primary: #1a5f38;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #2a9d8f;
-  --sidebar-accent-foreground: #ffffff;
-  --sidebar-border: #1a5f38;
-  --sidebar-ring: #45b39e;
+  --background: #F7F4EF;
+  --foreground: #2C302E;
+  --card: #F7F4EF;
+  --card-foreground: #2C302E;
+  --popover: #F7F4EF;
+  --popover-foreground: #2C302E;
+  --primary: #1E3F20;
+  --primary-foreground: #F7F4EF;
+  --secondary: #C86D51;
+  --secondary-foreground: #F7F4EF;
+  --muted: #E8EFE9;
+  --muted-foreground: #2C302E;
+  --accent: #C86D51;
+  --accent-foreground: #F7F4EF;
+  --destructive: #C86D51;
+  --border: #E0DDD8;
+  --input: #F0EDE8;
+  --ring: #1E3F20;
+  --chart-1: #1E3F20;
+  --chart-2: #C86D51;
+  --chart-3: #E8EFE9;
+  --chart-4: #A5896B;
+  --chart-5: #D4C5B9;
+  --radius: 0.5rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
 }
 
 .dark {

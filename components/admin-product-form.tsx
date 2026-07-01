@@ -32,7 +32,7 @@ export default function AdminProductForm({ categories }: { categories: Category[
 
   return (
     <form
-      action={createProduct}
+      action={async (fd) => { await createProduct(fd) }}
       className="space-y-4"
     >
       <div>

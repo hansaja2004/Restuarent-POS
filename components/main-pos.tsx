@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useTransition } from 'react';
+import { useState, useEffect, useTransition, useRef } from 'react';
 import {
   Search,
   Plus,
@@ -17,6 +17,10 @@ import {
   Download,
   BookOpen,
   X,
+  User,
+  Phone,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useConfig } from '@/components/ConfigContext';
@@ -30,6 +34,7 @@ import {
 import { createFullOrder } from '@/app/actions/orders';
 import { toggleProductAvailability } from '@/app/actions/products';
 import { printToNetworkPrinter } from '@/app/actions/settings';
+import { getCustomerByPhone, createCustomer, searchCustomers } from '@/app/actions/customers';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -75,8 +80,9 @@ interface SavedOrder {
   cashReceived?: number;
   changeDue?: number;
   notes?: string;
-  isCustomerSelected?: boolean;
   applyServiceCharge?: boolean;
+  discount?: number;
+  customerName?: string;
   dbId?: number; // Backend database ID
 }
 
@@ -125,6 +131,18 @@ export default function MainPos({
   const { config } = useConfig();
   const [isPending, startTransition] = useTransition();
 
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const customerPhoneRef = useRef<HTMLInputElement>(null);
+  const categoriesRef = useRef<HTMLDivElement>(null);
+
+  const scrollCategories = (dir: 'left' | 'right') => {
+    if (categoriesRef.current) {
+      const scrollAmount = 250;
+      categoriesRef.current.scrollBy({ left: dir === 'left' ? -scrollAmount : scrollAmount, behavior: 'smooth' });
+    }
+  };
+
+
   const isPrivileged = ['admin', 'manager', 'director'].includes(session.role);
 
   const [localProducts, setLocalProducts] = useState<Product[]>(products);
@@ -142,6 +160,26 @@ export default function MainPos({
 
   // ── Tabs ─────────────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<'New' | 'Unpaid' | 'History'>('New');
+
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F2') {
+        e.preventDefault();
+        setActiveTab('Unpaid');
+      }
+      if (e.key === '0') {
+        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+        e.preventDefault();
+        customerPhoneRef.current?.focus();
+      }
+      if (e.key === 'F4') {
+        e.preventDefault();
+        document.getElementById('save-unpaid-btn')?.click();
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, []);
 
   // ── Hardware ─────────────────────────────────────────────────────────────────
   const [activeUsbDevice, setActiveUsbDevice] = useState<USBDevice | null>(null);
@@ -256,8 +294,74 @@ export default function MainPos({
   // ── Cart ──────────────────────────────────────────────────────────────────────
   const [cart, setCart] = useState<CartItem[]>([]);
   const [orderType, setOrderType] = useState<OrderType>('Takeaway');
-  const [isCustomerSelected, setIsCustomerSelected] = useState(false);
   const [applyServiceCharge, setApplyServiceCharge] = useState(true);
+  const [activeOrderNumber, setActiveOrderNumber] = useState<string | null>(null);
+
+  // ── Customer State ──
+  const [customerPhoneInput, setCustomerPhoneInput] = useState('');
+  const [customerNameInput, setCustomerNameInput] = useState('');
+  const [customerEmailInput, setCustomerEmailInput] = useState('');
+  const [selectedCustomer, setSelectedCustomer] = useState<{ id: number; name: string | null; phone: string; email: string | null } | null>(null);
+  const [customerSearchMsg, setCustomerSearchMsg] = useState('');
+  const [isCustomerLoading, setIsCustomerLoading] = useState(false);
+  const [customerSuggestions, setCustomerSuggestions] = useState<any[]>([]);
+  const [focusedSuggestionIndex, setFocusedSuggestionIndex] = useState(-1);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
+  useEffect(() => {
+    const fetchSuggestions = async () => {
+      if (customerPhoneInput.length > 1 && !selectedCustomer) {
+        const res = await searchCustomers(customerPhoneInput);
+        if (res.data) {
+          setCustomerSuggestions(res.data);
+          setShowSuggestions(true);
+          setFocusedSuggestionIndex(-1);
+        }
+      } else {
+        setCustomerSuggestions([]);
+        setShowSuggestions(false);
+        setFocusedSuggestionIndex(-1);
+      }
+    };
+    const debounce = setTimeout(fetchSuggestions, 300);
+    return () => clearTimeout(debounce);
+  }, [customerPhoneInput, selectedCustomer]);
+
+  const handleCustomerSearch = async () => {
+    if (!customerPhoneInput) return;
+    setIsCustomerLoading(true);
+    setCustomerSearchMsg('');
+    const res = await getCustomerByPhone(customerPhoneInput);
+    setIsCustomerLoading(false);
+    if (res.data) {
+      setSelectedCustomer(res.data);
+      setCustomerSearchMsg('Customer found.');
+    } else {
+      setSelectedCustomer(null);
+      setCustomerSearchMsg('Not found. Enter details to register.');
+    }
+  };
+
+  const handleCustomerRegister = async () => {
+    if (!customerPhoneInput) return;
+    setIsCustomerLoading(true);
+    const res = await createCustomer({
+      phone: customerPhoneInput,
+      name: customerNameInput,
+      email: customerEmailInput
+    });
+    setIsCustomerLoading(false);
+    if (res.data) {
+      setSelectedCustomer(res.data);
+      setCustomerSearchMsg('Registered successfully.');
+    } else if (res.error) {
+      setCustomerSearchMsg(res.error);
+    }
+  };
+
+  useEffect(() => {
+    if (cart.length === 0) setActiveOrderNumber(null);
+  }, [cart.length]);
 
   // ── Size Selector ───────────────────────────────────────────────────────────
   const [selectedProductForSize, setSelectedProductForSize] = useState<Product | null>(null);
@@ -275,12 +379,14 @@ export default function MainPos({
       const cartItemId = size ? `${product.id}-${size}` : String(product.id);
       const existing = prev.find((i) => i.id === cartItemId);
       if (existing) {
-        return prev.map((i) =>
-          i.id === cartItemId ? { ...i, quantity: i.quantity + 1 } : i,
-        );
+        // Bring existing item to the top and increase quantity
+        const withoutExisting = prev.filter((i) => i.id !== cartItemId);
+        return [
+          { ...existing, quantity: existing.quantity + 1 },
+          ...withoutExisting
+        ];
       }
       return [
-        ...prev,
         {
           id: cartItemId,
           productId: product.id,
@@ -290,6 +396,7 @@ export default function MainPos({
           imageUrl: product.imageUrl,
           size: size,
         },
+        ...prev,
       ];
     });
     setSelectedProductForSize(null);
@@ -305,21 +412,31 @@ export default function MainPos({
 
   // ── Tax Calculation ───────────────────────────────────────────────────────────
   const foodSubtotal = cart.reduce((s, i) => s + i.price * i.quantity, 0);
-  const hasCharges = !isCustomerSelected;
+
+  const isType = (t: string) => orderType === t;
+  const typeScEnabled = isType('Dine in') ? config.enableServiceCharge_DineIn : isType('Online') ? config.enableServiceCharge_Online : config.enableServiceCharge_Takeaway;
+  const typeSsclEnabled = isType('Dine in') ? config.enableSSCL_DineIn : isType('Online') ? config.enableSSCL_Online : config.enableSSCL_Takeaway;
+  const typeVatEnabled = isType('Dine in') ? config.enableVAT_DineIn : isType('Online') ? config.enableVAT_Online : config.enableVAT_Takeaway;
+
   const serviceChargePercent =
-    applyServiceCharge && hasCharges && config.enableServiceCharge
+    applyServiceCharge && typeScEnabled
       ? orderType === 'Dine in'
         ? config.waiterServiceCharge
-        : orderType === 'Takeaway' || orderType === 'Online'
-        ? config.counterServiceCharge
-        : 0
+        : config.counterServiceCharge
       : 0;
+      
   const serviceCharge = (foodSubtotal * serviceChargePercent) / 100;
   const amountForSSCL = foodSubtotal + serviceCharge;
-  const sscl = hasCharges && config.enableSSCL ? (amountForSSCL * config.ssclPercentage) / 100 : 0;
+  const sscl = typeSsclEnabled ? (amountForSSCL * config.ssclPercentage) / 100 : 0;
   const amountForVAT = amountForSSCL + sscl;
-  const vat = hasCharges ? (amountForVAT * config.vatPercentage) / 100 : 0;
-  const finalTotal = foodSubtotal + serviceCharge + sscl + vat;
+  const vat = typeVatEnabled ? (amountForVAT * config.vatPercentage) / 100 : 0;
+  
+  const customerDiscountAmount = (config.enableCustomerDiscount && selectedCustomer && config.customerDiscountAmount) 
+    ? Number(config.customerDiscountAmount) 
+    : 0;
+
+  const finalTotalRaw = Math.max(0, foodSubtotal + serviceCharge + sscl + vat - customerDiscountAmount);
+  const finalTotal = Math.round(finalTotalRaw * 100) / 100;
 
   // ── Orders ────────────────────────────────────────────────────────────────────
   const [savedOrders, setSavedOrders] = useState<SavedOrder[]>([]);
@@ -339,6 +456,8 @@ export default function MainPos({
       status: go.status === 'refunded' ? 'Refunded' : 'Paid',
       timestamp: new Date(go.createdAt).getTime(),
       paymentMethod: go.paymentMethod || 'Cash',
+      discount: parseFloat(go.discount || '0'),
+      customerName: go.customerName || undefined,
       dbId: go.id,
     }));
 
@@ -364,6 +483,7 @@ export default function MainPos({
 
   // ── Checkout Modal ────────────────────────────────────────────────────────────
   const [showCheckout, setShowCheckout] = useState(false);
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [paymentSplits, setPaymentSplits] = useState({ Cash: '', Card: '', QR: '' });
   const [orderNotes, setOrderNotes] = useState('');
   
@@ -378,7 +498,7 @@ export default function MainPos({
 
   const handleSaveUnpaid = () => {
     if (cart.length === 0) return;
-    const ordNum = generateOrderNumber();
+    const ordNum = activeOrderNumber || generateOrderNumber();
     const order: SavedOrder = {
       id: Date.now().toString(),
       orderNumber: ordNum,
@@ -388,104 +508,128 @@ export default function MainPos({
       status: 'Unpaid',
       timestamp: Date.now(),
       notes: orderNotes || undefined,
-      isCustomerSelected: isCustomerSelected || undefined,
       applyServiceCharge: applyServiceCharge,
+      discount: customerDiscountAmount,
+      customerName: selectedCustomer ? (selectedCustomer.name || selectedCustomer.phone) : undefined,
     };
     
     // Also save unpaid orders to backend if needed, or wait until paid. 
     // Currently unpaid orders are just stored locally until paid.
     // Let's keep it local for now, as it will be sent to the backend when processed from "Unpaid" tab.
 
-    persistAndSet([order, ...savedOrders]);
+    // Replace any existing unpaid order with the same order number
+    persistAndSet([order, ...savedOrders.filter(o => !(o.orderNumber === ordNum && o.status === 'Unpaid'))]);
+    
     if (config.autoPrintReceipt) handlePrint(order, false, false, true);
     else alert('Order saved as UNPAID.');
+    
     setCart([]);
     setOrderNotes('');
-    setIsCustomerSelected(false);
+    setSelectedCustomer(null);
+    setCustomerPhoneInput('');
+    setCustomerNameInput('');
+    setCustomerEmailInput('');
+    setCustomerSearchMsg('');
   };
 
   const processPayment = async () => {
-    let methodStr = '';
-    const parts = [];
-    if (cashGiven > 0) parts.push(`Cash:${Math.max(0, cashGiven - Math.max(changeDue, 0))}`);
-    if (cardGiven > 0) parts.push(`Card:${cardGiven}`);
-    if (qrGiven > 0) parts.push(`QR:${qrGiven}`);
-    
-    if (parts.length === 1) {
-      methodStr = parts[0].split(':')[0]; // Just the name if single payment
-    } else if (parts.length > 1) {
-      methodStr = parts.join('|'); // e.g. "Cash:1000|Card:1000"
-    } else {
-      methodStr = 'Cash';
-    }
-
-    const totalCashInHand = cashGiven;
-
-    const ordNum = generateOrderNumber();
-    const order: SavedOrder = {
-      id: Date.now().toString(),
-      orderNumber: ordNum,
-      type: orderType,
-      items: [...cart],
-      total: finalTotal,
-      status: 'Paid',
-      timestamp: Date.now(),
-      paymentMethod: methodStr,
-      cashReceived: totalCashInHand > 0 ? totalCashInHand : 0,
-      changeDue: Math.max(changeDue, 0),
-      notes: orderNotes || undefined,
-      isCustomerSelected: isCustomerSelected || undefined,
-      applyServiceCharge: applyServiceCharge,
-    };
-
-    // Show loading state or just await it before persisting locally so we get the dbId
+    if (isProcessingPayment || cart.length === 0) return;
+    setIsProcessingPayment(true);
     try {
-      const dbResult = await createFullOrder({
-        orderNumber: ordNum,
-        items: cart.map((i) => ({
-          productId: i.productId,
-          quantity: i.quantity,
-          price: i.price.toFixed(2),
-          size: i.size,
-        })),
-        subtotal: foodSubtotal,
-        taxAmount: sscl + vat,
-        serviceCharge: serviceCharge,
-        discount: 0,
-        totalAmount: finalTotal,
-        status: 'completed',
-        orderType: orderType,
-        paymentMethod: methodStr,
-        notes: orderNotes,
-      });
-      if (dbResult?.orderId) {
-        order.dbId = dbResult.orderId;
+      let methodStr = '';
+      const parts = [];
+      if (cashGiven > 0) parts.push(`Cash:${Math.max(0, cashGiven - Math.max(changeDue, 0))}`);
+      if (cardGiven > 0) parts.push(`Card:${cardGiven}`);
+      if (qrGiven > 0) parts.push(`QR:${qrGiven}`);
+      
+      if (parts.length === 1) {
+        methodStr = parts[0].split(':')[0]; // Just the name if single payment
+      } else if (parts.length > 1) {
+        methodStr = parts.join('|'); // e.g. "Cash:1000|Card:1000"
+      } else {
+        methodStr = 'Cash';
       }
-    } catch (e) {
-      console.error("Failed to save to DB", e);
+
+      const totalCashInHand = cashGiven;
+
+      const ordNum = activeOrderNumber || generateOrderNumber();
+      const order: SavedOrder = {
+        id: Date.now().toString(),
+        orderNumber: ordNum,
+        type: orderType,
+        items: [...cart],
+        total: finalTotal,
+        status: 'Paid',
+        timestamp: Date.now(),
+        paymentMethod: methodStr,
+        cashReceived: totalCashInHand > 0 ? totalCashInHand : 0,
+        changeDue: Math.max(changeDue, 0),
+        notes: orderNotes || undefined,
+        applyServiceCharge: applyServiceCharge,
+        discount: customerDiscountAmount,
+        customerName: selectedCustomer ? (selectedCustomer.name || selectedCustomer.phone) : undefined,
+      };
+
+      // Show loading state or just await it before persisting locally so we get the dbId
+      try {
+        const dbResult = await createFullOrder({
+          orderNumber: ordNum,
+          items: cart.map((i) => ({
+            productId: i.productId,
+            quantity: i.quantity,
+            price: i.price.toFixed(2),
+            size: i.size,
+          })),
+          subtotal: foodSubtotal,
+          taxAmount: sscl + vat,
+          serviceCharge: serviceCharge,
+          discount: customerDiscountAmount,
+          totalAmount: finalTotal,
+          status: 'completed',
+          orderType: orderType,
+          paymentMethod: methodStr,
+          notes: orderNotes,
+          customerId: selectedCustomer?.id,
+        });
+        if (dbResult?.orderId) {
+          order.dbId = dbResult.orderId;
+        }
+      } catch (e) {
+        console.error("Failed to save to DB", e);
+      }
+
+      // Persist locally
+      persistAndSet([order, ...savedOrders]);
+
+      const kickDrawer = config.autoKickDrawer && cashGiven > 0;
+      if (config.autoPrintReceipt) {
+        handlePrint(order, false, kickDrawer);
+      } else if (kickDrawer) {
+        handleKickDrawer();
+      }
+
+      setCart([]);
+      setShowCheckout(false);
+      setPaymentSplits({ Cash: '', Card: '', QR: '' });
+      setOrderNotes('');
+      setSelectedCustomer(null);
+      setCustomerPhoneInput('');
+      setCustomerNameInput('');
+      setCustomerEmailInput('');
+      setCustomerSearchMsg('');
+      // Stay on 'New' tab
+    } finally {
+      setIsProcessingPayment(false);
     }
-
-    // Persist locally
-    persistAndSet([order, ...savedOrders]);
-
-    const kickDrawer = config.autoKickDrawer && cashGiven > 0;
-    if (config.autoPrintReceipt) {
-      handlePrint(order, false, kickDrawer);
-    } else if (kickDrawer) {
-      handleKickDrawer();
-    }
-
-    setCart([]);
-    setShowCheckout(false);
-    setPaymentSplits({ Cash: '', Card: '', QR: '' });
-    setOrderNotes('');
-    setIsCustomerSelected(false);
-    // Stay on 'New' tab
   };
 
   const handlePayUnpaid = (order: SavedOrder) => {
     setCart(order.items);
     setOrderType(order.type);
+    setOrderNotes(order.notes || '');
+    setApplyServiceCharge(order.applyServiceCharge ?? true);
+    setActiveOrderNumber(order.orderNumber);
+
     persistAndSet(savedOrders.filter((o) => o.id !== order.id));
     setActiveTab('New');
     setShowCheckout(true);
@@ -515,7 +659,7 @@ export default function MainPos({
     }
 
     const refundAmt = parseFloat(refundForm.amount);
-    if (isNaN(refundAmt) || refundAmt <= 0 || refundAmt > selectedRefundOrder.total) {
+    if (isNaN(refundAmt) || refundAmt <= 0) {
       alert('Invalid refund amount!');
       return;
     }
@@ -540,15 +684,6 @@ export default function MainPos({
       handleKickDrawer().catch(console.error);
     }
 
-    // Call server action to mark as refunded in DB
-    if (selectedRefundOrder.dbId) {
-      startTransition(async () => {
-        // We import refundOrder dynamically or statically
-        const { refundOrder } = await import('@/app/actions/orders');
-        await refundOrder(selectedRefundOrder.dbId!, refundAmt, refundForm.method);
-      });
-    }
-
     const log: RefundLog = {
       id: Date.now().toString(),
       customerName: refundForm.name,
@@ -559,6 +694,19 @@ export default function MainPos({
       timestamp: Date.now(),
       orderNumber: selectedRefundOrder.orderNumber,
     };
+
+    if (config.autoPrintReceipt) {
+      handlePrint({ ...selectedRefundOrder, status: 'Refunded', refundDetails: log }, false, false, false);
+    }
+
+    // Call server action to mark as refunded in DB
+    if (selectedRefundOrder.dbId) {
+      startTransition(async () => {
+        // We import refundOrder dynamically or statically
+        const { refundOrder } = await import('@/app/actions/orders');
+        await refundOrder(selectedRefundOrder.dbId!, refundAmt, refundForm.method);
+      });
+    }
     const existing: RefundLog[] = JSON.parse(localStorage.getItem(REFUNDS_KEY) || '[]');
     localStorage.setItem(REFUNDS_KEY, JSON.stringify([log, ...existing]));
 
@@ -599,20 +747,24 @@ export default function MainPos({
 
     const rows = todays.map((order) => {
       const subtotal = order.items.reduce((s, i) => s + i.price * i.quantity, 0);
-      const hasC = !order.isCustomerSelected;
-      const scPct = hasC && config.enableServiceCharge
-        ? order.type === 'Waiter' ? config.waiterServiceCharge : config.counterServiceCharge
+      
+      const oTypeScEnabled = order.type === 'Dine in' ? config.enableServiceCharge_DineIn : order.type === 'Online' ? config.enableServiceCharge_Online : config.enableServiceCharge_Takeaway;
+      const oTypeSsclEnabled = order.type === 'Dine in' ? config.enableSSCL_DineIn : order.type === 'Online' ? config.enableSSCL_Online : config.enableSSCL_Takeaway;
+      const oTypeVatEnabled = order.type === 'Dine in' ? config.enableVAT_DineIn : order.type === 'Online' ? config.enableVAT_Online : config.enableVAT_Takeaway;
+
+      const scPct = oTypeScEnabled
+        ? order.type === 'Dine in' ? config.waiterServiceCharge : config.counterServiceCharge
         : 0;
       const sc = (subtotal * scPct) / 100;
-      const ssclAmt = hasC && config.enableSSCL ? ((subtotal + sc) * config.ssclPercentage) / 100 : 0;
-      const vatAmt = hasC ? ((subtotal + sc + ssclAmt) * config.vatPercentage) / 100 : 0;
+      const ssclAmt = oTypeSsclEnabled ? ((subtotal + sc) * config.ssclPercentage) / 100 : 0;
+      const vatAmt = oTypeVatEnabled ? ((subtotal + sc + ssclAmt) * config.vatPercentage) / 100 : 0;
 
       return {
         'Order Number': order.orderNumber,
         'Date': new Date(order.timestamp).toLocaleDateString(),
         'Time': new Date(order.timestamp).toLocaleTimeString(),
         'Order Type': order.type,
-        'Customer Type': order.isCustomerSelected ? 'Registered Customer' : 'Walk-in',
+        'Customer Type': 'Walk-in',
         'Items Summary': order.items.map((i) => `${i.name} (x${i.quantity})`).join(', '),
         'Payment Method': order.paymentMethod?.replace(/\|/g, ', ') || 'N/A',
         'Subtotal (Rs.)': subtotal,
@@ -642,7 +794,7 @@ export default function MainPos({
     }`;
 
   const catBtn = (id: number | null) =>
-    `px-4 py-2 rounded-full text-sm font-semibold transition-all ${
+    `px-4 py-2 rounded-full text-sm font-semibold transition-all w-32 min-w-[128px] shrink-0 truncate text-center ${
       selectedCategory === id
         ? 'bg-teal-600 text-white shadow-md'
         : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
@@ -650,24 +802,116 @@ export default function MainPos({
 
   // ─────────────────────────────────────────────────────────────────────────────
 
-  return (
-    <div className="flex-1 flex flex-col h-screen overflow-hidden">
-      {/* ── Top Bar ── */}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 bg-white border-b border-gray-200 shadow-sm">
-        {/* Category pills */}
-        <div className="flex items-center gap-2 flex-wrap max-w-full">
-          <button className={catBtn(null)} onClick={() => setSelectedCategory(null)}>
-            All
-          </button>
-          {categories.map((cat) => (
-            <button key={cat.id} className={catBtn(cat.id)} onClick={() => setSelectedCategory(cat.id)}>
-              {cat.name}
-            </button>
-          ))}
-        </div>
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (selectedProductForSize) {
+        const key = e.key.toLowerCase();
+        if (key === 's' || key === '1') {
+          if (selectedProductForSize.smallPrice) {
+            e.preventDefault();
+            addToCart(selectedProductForSize, parseFloat(selectedProductForSize.smallPrice), 'Small');
+          }
+          return;
+        }
+        if (key === 'm' || key === '2') {
+          if (selectedProductForSize.mediumPrice) {
+            e.preventDefault();
+            addToCart(selectedProductForSize, parseFloat(selectedProductForSize.mediumPrice), 'Medium');
+          }
+          return;
+        }
+        if (key === 'l' || key === '3') {
+          if (selectedProductForSize.largePrice) {
+            e.preventDefault();
+            addToCart(selectedProductForSize, parseFloat(selectedProductForSize.largePrice), 'Large');
+          }
+          return;
+        }
+      }
 
-        {/* Right controls */}
-        <div className="flex items-center gap-3 flex-wrap">
+      if (showCheckout) {
+        if (e.key === 'Enter') {
+          if (e.target instanceof HTMLTextAreaElement) return;
+          e.preventDefault();
+          if (totalGiven >= finalTotal && !isProcessingPayment) {
+            processPayment();
+          }
+          return;
+        }
+        const isInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+        
+        if (!isInput && e.key === '1') {
+          e.preventDefault();
+          setPaymentSplits({ ...paymentSplits, Cash: finalTotal.toFixed(2) });
+          return;
+        }
+        if (!isInput && e.key === '2') {
+          e.preventDefault();
+          setPaymentSplits({ ...paymentSplits, Card: finalTotal.toFixed(2) });
+          return;
+        }
+        if (!isInput && e.key === '3') {
+          e.preventDefault();
+          setPaymentSplits({ ...paymentSplits, QR: finalTotal.toFixed(2) });
+          return;
+        }
+      }
+
+      const isGlobalInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+      
+      if (!isGlobalInput) {
+        const key = e.key.toLowerCase();
+        if (key === 'd') { e.preventDefault(); setOrderType('Dine in'); return; }
+        if (key === 't') { e.preventDefault(); setOrderType('Takeaway'); return; }
+        if (key === 'o') { e.preventDefault(); setOrderType('Online'); return; }
+      }
+
+      switch (e.key) {
+        case 'F9':
+          e.preventDefault();
+          if (!showCheckout && cart.length > 0) {
+            setShowCheckout(true);
+          }
+          break;
+        case 'F8':
+          e.preventDefault();
+          if (!showCheckout) searchInputRef.current?.focus();
+          break;
+        case 'F4':
+          e.preventDefault();
+          document.getElementById('save-unpaid-btn')?.click();
+          break;
+        case 'Escape':
+          if (showCheckout) setShowCheckout(false);
+          else if (showRefundModal) setShowRefundModal(false);
+          else if (selectedProductForSize) setSelectedProductForSize(null);
+          break;
+        case 'F1':
+          e.preventDefault();
+          setActiveTab('New');
+          break;
+        case 'F2':
+          e.preventDefault();
+          setActiveTab('Unpaid');
+          break;
+        case 'F3':
+          e.preventDefault();
+          setActiveTab('History');
+          break;
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showCheckout, showRefundModal, selectedProductForSize, cart.length, setActiveTab, totalGiven, finalTotal, isProcessingPayment, paymentSplits]);
+
+  return (
+    <div className="flex-1 flex h-screen overflow-hidden bg-gray-50">
+      {/* ── Left Section (Top Bar + Main Content) ── */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden">
+        {/* ── Top Bar ── */}
+        <div className="flex flex-col bg-white shadow-sm z-10 relative border-b border-gray-200">
+        {/* Action Controls Row */}
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-gray-100">
           {/* Tab switcher */}
           <div className="flex gap-1.5">
             <button className={tabBtn('New')} onClick={() => setActiveTab('New')}>
@@ -686,33 +930,78 @@ export default function MainPos({
             </button>
           </div>
 
-          {/* Clock */}
-          {currentTime && (
-            <div className="hidden sm:flex text-xs text-gray-500 font-semibold bg-gray-50 border border-gray-200 px-3 py-1.5 rounded-lg items-center gap-1.5">
-              <Clock size={14} className="text-teal-600" />
-              {currentTime.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}
+          {/* Right controls */}
+          <div className="flex items-center gap-3 flex-wrap">
+            {/* Clock */}
+            {currentTime && (
+              <div className="hidden sm:flex text-xs text-gray-500 font-semibold bg-gray-50 border border-gray-200 px-3 py-1.5 rounded-lg items-center gap-1.5">
+                <Clock size={14} className="text-teal-600" />
+                {currentTime.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}
+              </div>
+            )}
+
+            {/* Drawer button */}
+            <button
+              onClick={handleManualDrawerKick}
+              className="px-3 py-1.5 text-sm font-bold rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition-all"
+            >
+              Open Drawer
+            </button>
+
+            {/* Search */}
+            <div className="relative" title="Shortcut: F8">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+              <input
+                ref={searchInputRef}
+                type="text"
+                placeholder="Search menu (F8)…"
+                className="pl-9 pr-3 py-2 text-sm rounded-lg border border-gray-200 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-teal-500 w-44"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
             </div>
-          )}
-
-          {/* Drawer button */}
-          <button
-            onClick={handleManualDrawerKick}
-            className="px-3 py-1.5 text-sm font-bold rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition-all"
-          >
-            Open Drawer
-          </button>
-
-          {/* Search */}
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-            <input
-              type="text"
-              placeholder="Search menu…"
-              className="pl-9 pr-3 py-2 text-sm rounded-lg border border-gray-200 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-teal-500 w-44"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
           </div>
+        </div>
+
+        {/* Category pills Row (Chip Carousel) */}
+        <div className="relative flex items-center bg-gray-50/50 group">
+          <button 
+            onClick={() => scrollCategories('left')} 
+            className="absolute left-0 z-10 p-1.5 bg-gradient-to-r from-gray-100 via-gray-50 to-transparent hover:text-teal-600 h-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+          >
+            <div className="bg-white shadow-sm border border-gray-200 rounded-full p-1">
+              <ChevronLeft size={16} />
+            </div>
+          </button>
+          
+          <div 
+            ref={categoriesRef}
+            className="flex items-center gap-2 px-5 py-3 overflow-x-auto scroll-smooth w-full"
+            style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+          >
+            <style jsx>{`
+              div::-webkit-scrollbar {
+                display: none;
+              }
+            `}</style>
+            <button className={catBtn(null)} onClick={() => setSelectedCategory(null)}>
+              All
+            </button>
+            {categories.map((cat) => (
+              <button key={cat.id} className={catBtn(cat.id)} onClick={() => setSelectedCategory(cat.id)}>
+                {cat.name}
+              </button>
+            ))}
+          </div>
+
+          <button 
+            onClick={() => scrollCategories('right')} 
+            className="absolute right-0 z-10 p-1.5 bg-gradient-to-l from-gray-100 via-gray-50 to-transparent hover:text-teal-600 h-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+          >
+            <div className="bg-white shadow-sm border border-gray-200 rounded-full p-1">
+              <ChevronRight size={16} />
+            </div>
+          </button>
         </div>
       </div>
 
@@ -821,6 +1110,11 @@ export default function MainPos({
                         <p className="text-sm text-gray-500 mt-0.5">
                           {order.type} • {new Date(order.timestamp).toLocaleTimeString()}
                         </p>
+                        {order.customerName && (
+                          <p className="text-xs font-semibold text-teal-600 mt-0.5">
+                            Customer: {order.customerName}
+                          </p>
+                        )}
                         <p className="text-sm text-gray-700 mt-2 font-medium">
                           {order.items.map((i) => `${i.quantity}× ${i.name}`).join(', ')}
                         </p>
@@ -898,6 +1192,11 @@ export default function MainPos({
                           {order.type}   {order.paymentMethod?.replace(/\|/g, ', ')}  {' '}
                           {new Date(order.timestamp).toLocaleString()}
                         </p>
+                        {order.customerName && (
+                          <p className="text-xs font-semibold text-teal-600 mt-0.5">
+                            Customer: {order.customerName}
+                          </p>
+                        )}
                         <p className="text-sm text-gray-700 mt-2">
                           {order.items.map((i) => `${i.quantity}× ${i.name}`).join(', ')}
                         </p>
@@ -935,53 +1234,203 @@ export default function MainPos({
             </div>
           )}
         </div>
+      </div>
+    </div>
 
-        {/* ── Cart Sidebar (New Order only) ── */}
-        {activeTab === 'New' && (
-          <div className="w-88 shrink-0 bg-white border-l border-gray-200 flex flex-col shadow-xl" style={{ width: '360px' }}>
+
+      {/* ── Cart Sidebar (New Order only) ── */}
+      {activeTab === 'New' && (
+        <div className="w-88 shrink-0 bg-white border-l border-gray-200 flex flex-col shadow-xl z-20" style={{ width: '360px' }}>
             {/* Cart header */}
-            <div className="p-4 border-b border-gray-200 flex justify-between items-center">
-              <h2 className="font-bold text-gray-900 text-lg">Current Order</h2>
-              <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
-                {(['Takeaway', 'Dine in', 'Online'] as OrderType[]).map((type) => (
+            <div className="p-4 border-b border-gray-200 flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <h2 className="font-bold text-gray-900 text-lg">Current Order</h2>
+                {cart.length > 0 && (
+                  <button id="clear-cart-btn" onClick={() => { 
+                    if (window.confirm('Clear cart?')) {
+                      setCart([]);
+                      setSelectedCustomer(null);
+                      setCustomerPhoneInput('');
+                      setCustomerNameInput('');
+                      setCustomerEmailInput('');
+                      setCustomerSearchMsg('');
+                    }
+                  }} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-lg text-xs font-bold transition-all shadow-sm">
+                    <Trash2 size={14} /> Clear Cart
+                  </button>
+                )}
+              </div>
+              <div className="flex gap-2 w-full">
+                {(['Takeaway', 'Dine in', 'Online'] as OrderType[]).map((type) => {
+                  const colors: Record<string, string> = {
+                    'Takeaway': 'bg-amber-50 text-amber-700 hover:bg-amber-100 border-amber-200',
+                    'Dine in': 'bg-blue-50 text-blue-700 hover:bg-blue-100 border-blue-200',
+                    'Online': 'bg-purple-50 text-purple-700 hover:bg-purple-100 border-purple-200'
+                  };
+                  const activeColors: Record<string, string> = {
+                    'Takeaway': 'bg-amber-500 text-white border-amber-600 shadow-md',
+                    'Dine in': 'bg-blue-500 text-white border-blue-600 shadow-md',
+                    'Online': 'bg-purple-500 text-white border-purple-600 shadow-md'
+                  };
+                  return (
                   <button
                     key={type}
                     onClick={() => setOrderType(type)}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-                      orderType === type ? 'bg-white shadow text-gray-900' : 'text-gray-500'
+                    className={`flex-1 py-1.5 text-xs font-bold rounded-lg border transition-all flex items-center justify-center gap-1 ${
+                      orderType === type ? activeColors[type] : colors[type]
                     }`}
                   >
-                    {type}
+                    {type} ({type.charAt(0)})
                   </button>
-                ))}
+                )})}
               </div>
             </div>
 
-            {/* Customer mode & Options (shows when items in cart) */}
-            {cart.length > 0 && (
+            {/* Options (shows when items in cart) */}
+            {cart.length > 0 && typeScEnabled && (
               <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 flex flex-col gap-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-gray-600">Customer Mode</span>
-                  <select
-                    className="bg-white border border-gray-300 rounded-md px-2 py-1 text-xs font-bold text-gray-700 focus:outline-none focus:ring-1 focus:ring-teal-500"
-                    value={isCustomerSelected ? 'customer' : 'walkin'}
-                    onChange={(e) => setIsCustomerSelected(e.target.value === 'customer')}
-                  >
-                    <option value="walkin">Walk-in (With Charges)</option>
-                    <option value="customer">Registered Customer (No Charges)</option>
-                  </select>
+                  <span className="text-xs font-semibold text-gray-600">Apply Service Charge</span>
+                  <input
+                    type="checkbox"
+                    checked={applyServiceCharge}
+                    onChange={(e) => setApplyServiceCharge(e.target.checked)}
+                    className="rounded border-gray-300 text-teal-600 focus:ring-teal-500"
+                  />
                 </div>
-                {config.enableServiceCharge && (
-                  <div className="flex items-center justify-between mt-1">
-                    <span className="text-xs font-semibold text-gray-600">Apply Service Charge</span>
-                    <input
-                      type="checkbox"
-                      checked={applyServiceCharge}
-                      onChange={(e) => setApplyServiceCharge(e.target.checked)}
-                      className="rounded border-gray-300 text-teal-600 focus:ring-teal-500"
-                    />
+              </div>
+            )}
+
+            {/* Customer Section */}
+            {cart.length > 0 && (
+              <div className="px-4 py-3 border-b border-gray-100 bg-gray-50/50">
+                <div className="flex flex-col gap-2 p-3 bg-white border border-gray-200 rounded-xl shadow-sm">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+                      <User size={14} className="text-gray-400" /> Customer Lookup
+                    </span>
+                    {selectedCustomer && (
+                      <button 
+                        onClick={() => { setSelectedCustomer(null); setCustomerPhoneInput(''); setCustomerSearchMsg(''); }}
+                        className="text-[10px] font-bold text-red-500 hover:text-red-700 bg-red-50 px-2 py-0.5 rounded-full"
+                      >Clear</button>
+                    )}
                   </div>
-                )}
+                  {!selectedCustomer ? (
+                    <div className="flex flex-col gap-2">
+                      <div className="relative flex gap-2">
+                        <div className="relative flex-1">
+                          <input 
+                            ref={customerPhoneRef}
+                            type="text"
+                            placeholder="Phone Number (0)"
+                            value={customerPhoneInput}
+                            onChange={(e) => setCustomerPhoneInput(e.target.value)}
+                            onFocus={() => { if (customerSuggestions.length > 0) setShowSuggestions(true); }}
+                            onKeyDown={(e) => {
+                              if (!showSuggestions || customerSuggestions.length === 0) {
+                                if (e.key === 'Enter') handleCustomerSearch();
+                                return;
+                              }
+                              if (e.key === 'ArrowDown') {
+                                e.preventDefault();
+                                setFocusedSuggestionIndex(prev => (prev < customerSuggestions.length - 1 ? prev + 1 : prev));
+                              } else if (e.key === 'ArrowUp') {
+                                e.preventDefault();
+                                setFocusedSuggestionIndex(prev => (prev > 0 ? prev - 1 : -1));
+                              } else if (e.key === 'Enter') {
+                                e.preventDefault();
+                                if (focusedSuggestionIndex >= 0 && focusedSuggestionIndex < customerSuggestions.length) {
+                                  const c = customerSuggestions[focusedSuggestionIndex];
+                                  setCustomerPhoneInput(c.phone);
+                                  setSelectedCustomer(c);
+                                  setShowSuggestions(false);
+                                  setCustomerSearchMsg('');
+                                  setFocusedSuggestionIndex(-1);
+                                } else {
+                                  handleCustomerSearch();
+                                }
+                              } else if (e.key === 'Escape') {
+                                setShowSuggestions(false);
+                                setFocusedSuggestionIndex(-1);
+                              }
+                            }}
+                            className="w-full pl-8 pr-2 py-1.5 border border-gray-300 rounded-lg text-xs font-medium focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all bg-white"
+                          />
+                          <Phone size={12} className="absolute left-2.5 top-2.5 text-gray-400" />
+                        </div>
+                        <button 
+                          onClick={handleCustomerSearch}
+                          disabled={isCustomerLoading}
+                          className="px-3 py-1.5 bg-gray-800 text-white rounded-lg text-xs hover:bg-gray-700 transition-colors font-bold shrink-0 shadow-sm"
+                        >
+                          Search
+                        </button>
+
+                        {showSuggestions && customerSuggestions.length > 0 && (
+                          <div className="absolute top-full left-0 mt-1 w-full bg-white border border-gray-200 shadow-xl rounded-lg overflow-hidden z-50">
+                            {customerSuggestions.map((c, index) => (
+                              <button
+                                key={c.id}
+                                onClick={() => {
+                                  setCustomerPhoneInput(c.phone);
+                                  setSelectedCustomer(c);
+                                  setShowSuggestions(false);
+                                  setCustomerSearchMsg('');
+                                  setFocusedSuggestionIndex(-1);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-xs flex flex-col border-b border-gray-100 last:border-0 transition-colors ${
+                                  focusedSuggestionIndex === index ? 'bg-teal-50' : 'hover:bg-teal-50 bg-white'
+                                }`}
+                              >
+                                <span className="font-bold text-gray-800">{c.phone}</span>
+                                {c.name && <span className="text-[10px] text-gray-500">{c.name}</span>}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      {customerSearchMsg && <p className="text-[10px] font-medium text-amber-600">{customerSearchMsg}</p>}
+                      {customerSearchMsg.includes('Not found') && (
+                        <div className="flex flex-col gap-2 mt-1 p-2.5 bg-gray-50 rounded-lg border border-gray-200">
+                          <span className="text-[10px] font-bold text-gray-600 uppercase tracking-wider">New Customer</span>
+                          <input 
+                            type="text" placeholder="Name (Optional)" value={customerNameInput}
+                            onChange={(e) => setCustomerNameInput(e.target.value)}
+                            className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-xs focus:outline-none focus:ring-1 focus:ring-teal-500"
+                          />
+                          <input 
+                            type="email" placeholder="Email (Optional)" value={customerEmailInput}
+                            onChange={(e) => setCustomerEmailInput(e.target.value)}
+                            className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-xs focus:outline-none focus:ring-1 focus:ring-teal-500"
+                          />
+                          <button 
+                            onClick={handleCustomerRegister}
+                            disabled={isCustomerLoading}
+                            className="w-full mt-1 px-2 py-1.5 bg-teal-600 text-white font-bold rounded-md text-xs hover:bg-teal-700 transition-colors shadow-sm"
+                          >Register & Link</button>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="bg-teal-50 border border-teal-200 rounded-lg p-2.5 flex items-start justify-between">
+                      <div className="flex flex-col">
+                        <span className="text-sm font-black text-teal-900">{selectedCustomer.name || 'Guest'}</span>
+                        <span className="text-xs font-medium text-teal-700 flex items-center gap-1 mt-0.5">
+                          <Phone size={10} /> {selectedCustomer.phone}
+                        </span>
+                        {config.enableCustomerDiscount && config.customerDiscountAmount && (
+                          <span className="text-[10px] font-bold text-teal-600 mt-1.5 bg-teal-100 w-fit px-1.5 py-0.5 rounded">
+                            - Rs. {config.customerDiscountAmount} Discount
+                          </span>
+                        )}
+                      </div>
+                      <div className="bg-teal-600 text-white p-1.5 rounded-full shadow-sm">
+                        <User size={14} />
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -1048,6 +1497,12 @@ export default function MainPos({
                 <span>Subtotal</span>
                 <span>Rs. {foodSubtotal.toFixed(2)}</span>
               </div>
+              {customerDiscountAmount > 0 && (
+                <div className="flex justify-between text-sm text-teal-600 font-medium">
+                  <span>Customer Discount</span>
+                  <span>- Rs. {customerDiscountAmount.toFixed(2)}</span>
+                </div>
+              )}
               {serviceCharge > 0 && (
                 <div className="flex justify-between text-sm text-gray-500">
                   <span>Service ({serviceChargePercent}%)</span>
@@ -1073,9 +1528,11 @@ export default function MainPos({
 
               <div className="flex gap-2 pt-2">
                 <button
+                  id="save-unpaid-btn"
                   onClick={handleSaveUnpaid}
                   disabled={cart.length === 0}
                   className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 font-semibold text-sm transition-all disabled:opacity-40"
+                  title="Save Unpaid (F4)"
                 >
                   <FileText size={15} /> Save Unpaid
                 </button>
@@ -1083,14 +1540,14 @@ export default function MainPos({
                   onClick={() => setShowCheckout(true)}
                   disabled={cart.length === 0}
                   className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-bold text-sm transition-all disabled:opacity-40 shadow-md"
+                  title="Shortcut: F9"
                 >
-                  <CreditCard size={15} /> Checkout
+                  <CreditCard size={15} /> Checkout (F9)
                 </button>
               </div>
             </div>
           </div>
         )}
-      </div>
 
       {/* ══════════════════════════════════════════════════════════════════════
           CHECKOUT MODAL
@@ -1120,7 +1577,7 @@ export default function MainPos({
               
               <div className="flex items-center gap-3">
                 <Banknote className="text-gray-400" size={20} />
-                <label className="text-sm font-semibold text-gray-600 w-16">Cash</label>
+                <label className="text-sm font-semibold text-gray-600 w-16" title="Shortcut: 1">Cash (1)</label>
                 <input
                   type="number"
                   className="flex-1 bg-white border border-gray-300 rounded-lg p-2 font-bold focus:outline-none focus:ring-2 focus:ring-teal-500"
@@ -1128,7 +1585,6 @@ export default function MainPos({
                   value={paymentSplits.Cash}
                   onChange={(e) => setPaymentSplits({ ...paymentSplits, Cash: e.target.value })}
                   onWheel={(e) => (e.target as HTMLElement).blur()}
-                  autoFocus
                 />
                 <div className="w-16"></div>
               </div>
@@ -1151,7 +1607,7 @@ export default function MainPos({
 
               <div className="flex items-center gap-3 mt-3">
                 <CreditCard className="text-gray-400" size={20} />
-                <label className="text-sm font-semibold text-gray-600 w-16">Card</label>
+                <label className="text-sm font-semibold text-gray-600 w-16" title="Shortcut: 2">Card (2)</label>
                 <input
                   type="number"
                   className="flex-1 bg-white border border-gray-300 rounded-lg p-2 font-bold focus:outline-none focus:ring-2 focus:ring-teal-500"
@@ -1179,7 +1635,7 @@ export default function MainPos({
 
               <div className="flex items-center gap-3 mt-3">
                 <QrCode className="text-gray-400" size={20} />
-                <label className="text-sm font-semibold text-gray-600 w-16">QR</label>
+                <label className="text-sm font-semibold text-gray-600 w-16" title="Shortcut: 3">QR (3)</label>
                 <input
                   type="number"
                   className="flex-1 bg-white border border-gray-300 rounded-lg p-2 font-bold focus:outline-none focus:ring-2 focus:ring-teal-500"
@@ -1233,10 +1689,11 @@ export default function MainPos({
             {/* Confirm button */}
             <button
               onClick={processPayment}
-              disabled={totalGiven < finalTotal}
+              disabled={totalGiven < finalTotal || isProcessingPayment}
               className="w-full py-4 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-lg flex items-center justify-center gap-2 transition-all shadow-xl disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Shortcut: Enter"
             >
-              <Printer size={20} /> Confirm & Print Receipt
+              <Printer size={20} /> {isProcessingPayment ? 'Processing...' : 'Confirm & Print Receipt (Enter)'}
             </button>
 
             {/* Pending DB write indicator */}
@@ -1271,8 +1728,9 @@ export default function MainPos({
                 <button
                   onClick={() => addToCart(selectedProductForSize, parseFloat(selectedProductForSize.smallPrice!), 'Small')}
                   className="w-full py-3 rounded-xl border border-gray-200 hover:bg-gray-50 text-gray-800 font-bold transition-all flex justify-between px-4"
+                  title="Shortcut: S or 1"
                 >
-                  <span>Small</span>
+                  <span>Small (S/1)</span>
                   <span>Rs. {parseFloat(selectedProductForSize.smallPrice).toFixed(2)}</span>
                 </button>
               )}
@@ -1280,8 +1738,9 @@ export default function MainPos({
                 <button
                   onClick={() => addToCart(selectedProductForSize, parseFloat(selectedProductForSize.mediumPrice!), 'Medium')}
                   className="w-full py-3 rounded-xl border border-gray-200 hover:bg-gray-50 text-gray-800 font-bold transition-all flex justify-between px-4"
+                  title="Shortcut: M or 2"
                 >
-                  <span>Medium</span>
+                  <span>Medium (M/2)</span>
                   <span>Rs. {parseFloat(selectedProductForSize.mediumPrice).toFixed(2)}</span>
                 </button>
               )}
@@ -1289,8 +1748,9 @@ export default function MainPos({
                 <button
                   onClick={() => addToCart(selectedProductForSize, parseFloat(selectedProductForSize.largePrice!), 'Large')}
                   className="w-full py-3 rounded-xl border border-gray-200 hover:bg-gray-50 text-gray-800 font-bold transition-all flex justify-between px-4"
+                  title="Shortcut: L or 3"
                 >
-                  <span>Large</span>
+                  <span>Large (L/3)</span>
                   <span>Rs. {parseFloat(selectedProductForSize.largePrice).toFixed(2)}</span>
                 </button>
               )}
@@ -1342,7 +1802,6 @@ export default function MainPos({
                     type="number"
                     step="0.01"
                     onWheel={(e) => (e.target as HTMLElement).blur()}
-                    max={selectedRefundOrder?.total}
                     className="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:outline-none focus:border-red-400 focus:ring-1 focus:ring-red-400 transition-all"
                     value={refundForm.amount}
                     onChange={(e) => setRefundForm({ ...refundForm, amount: e.target.value })}

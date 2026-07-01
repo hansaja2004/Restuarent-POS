@@ -16,10 +16,12 @@ import {
   UtensilsCrossed,
   PhoneCall,
   History,
-  Calendar
+  Calendar,
+  Printer
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { getHistoricalDashboardStats } from '@/app/actions/reports';
+import { useConfig } from './ConfigContext';
 
 interface Shift {
   id: string;
@@ -34,6 +36,7 @@ interface Props {
 export default function ReportsClient({ pastShifts }: Props) {
   const [activeTab, setActiveTab] = useState<'overview' | 'item-sales' | 'orders' | 'refunds'>('overview');
   const [searchQuery, setSearchQuery] = useState('');
+  const { config } = useConfig();
   
   // Filtering states
   const [filterMode, setFilterMode] = useState<'shift' | 'custom'>('shift');
@@ -86,8 +89,9 @@ export default function ReportsClient({ pastShifts }: Props) {
   const s = stats || {
     totalAmount: 0,
     orderCount: 0,
-    totalVAT: 0,
+    totalTax: 0,
     totalSSCL: 0,
+    totalVAT: 0,
     totalServiceCharge: 0,
     totalDiscount: 0,
     typeBreakdown: { DineIn: 0, Takeaway: 0, Online: 0 },
@@ -113,6 +117,7 @@ export default function ReportsClient({ pastShifts }: Props) {
     if (!stats) return alert('Generate a report first.');
     const wb = XLSX.utils.book_new();
 
+    // 1. Summary Sheet
     const summaryData = [
       ['Report Range', filterMode === 'shift' ? 'Specific Shift' : 'Custom Dates'],
       [''],
@@ -136,8 +141,9 @@ export default function ReportsClient({ pastShifts }: Props) {
     const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
     XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
 
+    // 2. Orders Sheet
     const ordersData = [
-      ['Order Number', 'Date', 'Status', 'Order Type', 'Payment Method', 'Subtotal', 'VAT', 'SSCL', 'Service Charge', 'Total Amount', 'Refund Amount']
+      ['Order Number', 'Date', 'Status', 'Order Type', 'Payment Method', 'Items', 'Details', 'Subtotal', 'Tax', 'Service Charge', 'Discount', 'Total Amount', 'Refund Amount']
     ];
     allHistoryOrders.forEach(o => {
       ordersData.push([
@@ -146,35 +152,136 @@ export default function ReportsClient({ pastShifts }: Props) {
         o.status,
         o.orderType || 'Takeaway',
         o.paymentMethod || 'Cash',
+        o.items?.toString() || '0',
+        o.itemsDetail || '',
         o.subtotal || '',
-        o.vatAmount || '',
-        o.ssclAmount || '',
+        o.taxAmount || '',
         o.serviceCharge || '',
+        o.discount || '',
         o.totalAmount || '',
         o.refundAmount || '0.00'
       ]);
     });
     const wsOrders = XLSX.utils.aoa_to_sheet(ordersData);
-    XLSX.utils.book_append_sheet(wb, wsOrders, 'Orders');
+    XLSX.utils.book_append_sheet(wb, wsOrders, 'All Orders');
 
+    // 3. Refunds Sheet
     const refundsData = [
-      ['Order Number', 'Date', 'Customer Name', 'Phone', 'Reason', 'Refund Amount']
+      ['Order Number', 'Date', 'Order Type', 'Items', 'Total', 'Refund Amount']
     ];
     refundedOrders.forEach(o => {
-      const log = refundLogs.find(l => l.orderNumber === (o.orderNumber || `#${o.id}`));
       refundsData.push([
         o.orderNumber || `#${o.id}`,
         o.createdAt ? new Date(o.createdAt).toLocaleString() : '',
-        log?.customerName || '',
-        log?.customerPhone || '',
-        log?.reason || '',
+        o.orderType || 'Takeaway',
+        o.items?.toString() || '0',
+        o.totalAmount || '',
         o.refundAmount || o.totalAmount
       ]);
     });
     const wsRefunds = XLSX.utils.aoa_to_sheet(refundsData);
-    XLSX.utils.book_append_sheet(wb, wsRefunds, 'Refunds');
+    XLSX.utils.book_append_sheet(wb, wsRefunds, 'Refund History');
+
+    // 4. Order Items Sheet
+    const orderItemsData = [
+      ['Order Number', 'Date', 'Item Name', 'Size', 'Quantity', 'Unit Price', 'Total']
+    ];
+    allHistoryOrders.forEach(o => {
+      if (o.cartItems && Array.isArray(o.cartItems)) {
+        o.cartItems.forEach((item: any) => {
+          orderItemsData.push([
+            o.orderNumber || `#${o.id}`,
+            o.createdAt ? new Date(o.createdAt).toLocaleString() : '',
+            item.name,
+            item.size || 'reg',
+            item.quantity.toString(),
+            item.price.toString(),
+            (item.price * item.quantity).toString()
+          ]);
+        });
+      }
+    });
+    const wsOrderItems = XLSX.utils.aoa_to_sheet(orderItemsData);
+    XLSX.utils.book_append_sheet(wb, wsOrderItems, 'Order Items');
 
     XLSX.writeFile(wb, `Report_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  const handlePrintSummary = async () => {
+    try {
+      if (config.printerType === 'mock') {
+        alert('Printer is in mock mode. Summary printed (simulated).');
+        return;
+      }
+
+      if (config.printerType === 'browser') {
+        const { printHTMLSummary } = await import('@/lib/escpos');
+        printHTMLSummary(s, config);
+        return;
+      }
+
+      const { compileSummaryESC } = await import('@/lib/escpos');
+      const bytes = compileSummaryESC(s, config);
+
+      if (config.printerType === 'network') {
+        if (!config.networkIp || !config.networkPort) return alert('No network printer configured.');
+        const { printToNetworkPrinter } = await import('@/app/actions/settings');
+        await printToNetworkPrinter(config.networkIp, config.networkPort, Array.from(bytes));
+      } else if (config.printerType === 'webusb') {
+        const devices = await (navigator as any).usb.getDevices();
+        if (devices.length === 0) return alert('No USB printer paired. Go to Settings -> Hardware first.');
+        const dev = devices[0];
+        const { writeToWebUSB } = await import('@/lib/escpos');
+        await writeToWebUSB(dev, bytes);
+      } else if (config.printerType === 'webserial') {
+        alert('Serial printing summary not fully supported in Reports. Switch to Browser print mode in Settings.');
+      }
+    } catch (err: any) {
+      alert(`Print failed: ${err.message}`);
+    }
+  };
+
+  const handlePrintOrderReceipt = async (o: any) => {
+    try {
+      const mappedOrder = {
+        orderNumber: o.orderNumber || `#${o.id}`,
+        timestamp: o.createdAt,
+        type: o.orderType || 'Takeaway',
+        total: parseFloat(o.totalAmount),
+        items: o.cartItems || [],
+        paymentMethod: o.paymentMethod || 'Cash',
+        status: o.status,
+      };
+
+      if (config.printerType === 'mock') {
+        alert('Printer is in mock mode. Receipt printed (simulated).');
+        return;
+      }
+      if (config.printerType === 'browser') {
+        const { printHTMLReceipt } = await import('@/lib/escpos');
+        printHTMLReceipt(mappedOrder, config, 'Report', true);
+        return;
+      }
+      
+      const { compileReceiptESC } = await import('@/lib/escpos');
+      const bytes = compileReceiptESC(mappedOrder, config, 'Report', true);
+
+      if (config.printerType === 'network') {
+        if (!config.networkIp || !config.networkPort) return alert('No network printer configured.');
+        const { printToNetworkPrinter } = await import('@/app/actions/settings');
+        await printToNetworkPrinter(config.networkIp, config.networkPort, Array.from(bytes));
+      } else if (config.printerType === 'webusb') {
+        const devices = await (navigator as any).usb.getDevices();
+        if (devices.length === 0) return alert('No USB printer paired. Go to Settings -> Hardware first.');
+        const dev = devices[0];
+        const { writeToWebUSB } = await import('@/lib/escpos');
+        await writeToWebUSB(dev, bytes);
+      } else if (config.printerType === 'webserial') {
+        alert('Serial printing not fully supported in Reports. Switch to Browser print mode in Settings.');
+      }
+    } catch (err: any) {
+      alert(`Print failed: ${err.message}`);
+    }
   };
 
   const tabBtn = (id: 'overview' | 'item-sales' | 'orders' | 'refunds', label: string) => (
@@ -182,7 +289,7 @@ export default function ReportsClient({ pastShifts }: Props) {
       onClick={() => setActiveTab(id)}
       className={`px-4 py-2 font-semibold text-sm rounded-lg transition-all ${
         activeTab === id
-          ? 'bg-blue-600 text-white shadow'
+          ? 'bg-teal-600 text-white shadow'
           : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
       }`}
     >
@@ -224,7 +331,7 @@ export default function ReportsClient({ pastShifts }: Props) {
                 const eDate = new Date(s.end);
                 return (
                   <option key={s.id} value={s.id}>
-                    {sDate.toLocaleDateString()} ({sDate.toLocaleTimeString()} to {eDate.toLocaleTimeString()})
+                    {sDate.toLocaleDateString()} {sDate.toLocaleTimeString()} - {eDate.toLocaleDateString()} {eDate.toLocaleTimeString()}
                   </option>
                 );
               })}
@@ -267,32 +374,40 @@ export default function ReportsClient({ pastShifts }: Props) {
 
       {stats && (
         <>
-          <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
+          <div className="flex flex-wrap justify-between items-end gap-4 mb-8">
             <div className="flex gap-2">
               {tabBtn('overview', 'Analytics Overview')}
               {tabBtn('item-sales', 'Item Sales')}
-              {tabBtn('orders', 'Order List')}
-              {tabBtn('refunds', 'Refunds')}
+              {tabBtn('orders', 'Daily Order List')}
+              {tabBtn('refunds', 'Refund History')}
             </div>
-            <button
-              onClick={handleExportExcel}
-              className="px-4 py-2 bg-gray-900 text-white font-semibold text-sm rounded-lg hover:bg-gray-800 transition-all shadow flex items-center gap-2"
-            >
-              <Download size={14} /> Export to Excel
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={handleExportExcel}
+                className="px-4 py-2 bg-gray-900 text-white font-semibold text-sm rounded-lg hover:bg-gray-800 transition-all shadow flex items-center gap-2"
+              >
+                <Download size={14} /> Export Report
+              </button>
+              <button
+                onClick={handlePrintSummary}
+                className="px-4 py-2 bg-teal-600 text-white font-semibold text-sm rounded-lg hover:bg-teal-700 transition-all shadow flex items-center gap-2"
+              >
+                <Printer size={14} /> Print Summary
+              </button>
+            </div>
           </div>
 
           {activeTab === 'overview' && (
             <div className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl shadow-lg p-6 text-white relative overflow-hidden">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                <div className="bg-gradient-to-br from-teal-500 to-emerald-600 rounded-2xl shadow-lg p-6 text-white relative overflow-hidden">
                   <div className="relative z-10">
-                    <p className="text-blue-100 font-medium text-sm flex items-center gap-2">
+                    <p className="text-teal-100 font-medium text-sm flex items-center gap-2">
                       <DollarSign size={16} /> Total Revenue
                     </p>
                     <h3 className="text-3xl font-bold mt-2">Rs. {s.totalAmount.toLocaleString()}</h3>
-                    <p className="text-blue-100 text-xs mt-2 flex items-center gap-1">
-                      (After refunds)
+                    <p className="text-teal-100 text-xs mt-2 flex items-center gap-1">
+                      Report total (After refunds)
                     </p>
                   </div>
                 </div>
@@ -302,6 +417,7 @@ export default function ReportsClient({ pastShifts }: Props) {
                     <ShoppingBag size={16} className="text-blue-500" /> Completed Orders
                   </p>
                   <h3 className="text-3xl font-bold text-gray-900 mt-2">{s.orderCount}</h3>
+                  <p className="text-gray-400 text-xs mt-2">Across all order types</p>
                 </div>
 
                 <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 relative overflow-hidden">
@@ -327,6 +443,16 @@ export default function ReportsClient({ pastShifts }: Props) {
                   <h3 className="text-xl font-bold text-gray-900 mt-1">
                     <span className="text-sm text-gray-500 font-normal">SVC:</span> Rs. {(s.totalServiceCharge || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </h3>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 relative overflow-hidden">
+                  <p className="text-gray-500 font-medium text-sm flex items-center gap-2">
+                    <TicketPercent size={16} className="text-yellow-500" /> Discounts Given
+                  </p>
+                  <h3 className="text-3xl font-bold text-gray-900 mt-2">Rs. {(s.totalDiscount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+                  <p className="text-yellow-600 text-xs mt-2 font-semibold">
+                    Customer Discounts Applied
+                  </p>
                 </div>
               </div>
 
@@ -364,6 +490,7 @@ export default function ReportsClient({ pastShifts }: Props) {
                           </div>
                           <div className="text-right">
                             <p className="font-bold text-gray-900">Rs. {Number(amount).toLocaleString()}</p>
+                            <p className="text-xs text-gray-500">{s.totalAmount ? Math.round((Number(amount) / s.totalAmount) * 100) : 0}%</p>
                           </div>
                         </div>
                       );
@@ -383,6 +510,7 @@ export default function ReportsClient({ pastShifts }: Props) {
                         </div>
                         <div>
                           <p className="font-semibold text-gray-900">Takeaway Orders</p>
+                          <p className="text-xs text-gray-500">Counter pickups</p>
                         </div>
                       </div>
                       <div className="text-right">
@@ -397,6 +525,7 @@ export default function ReportsClient({ pastShifts }: Props) {
                         </div>
                         <div>
                           <p className="font-semibold text-gray-900">Dine-in Orders</p>
+                          <p className="text-xs text-gray-500">In-house dining</p>
                         </div>
                       </div>
                       <div className="text-right">
@@ -411,6 +540,7 @@ export default function ReportsClient({ pastShifts }: Props) {
                         </div>
                         <div>
                           <p className="font-semibold text-gray-900">Online Orders</p>
+                          <p className="text-xs text-gray-500">Web / App integrations</p>
                         </div>
                       </div>
                       <div className="text-right">
@@ -425,9 +555,9 @@ export default function ReportsClient({ pastShifts }: Props) {
 
           {activeTab === 'item-sales' && (
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-              <div className="p-5 border-b border-gray-100 bg-gray-50/50">
+              <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
                 <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-                  <BarChart2 size={18} className="text-blue-600" /> Item-wise Sales
+                  <BarChart2 size={18} className="text-teal-600" /> Item-wise Sales
                 </h2>
               </div>
               <div className="overflow-x-auto">
@@ -465,7 +595,7 @@ export default function ReportsClient({ pastShifts }: Props) {
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="p-5 border-b border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-gray-50/50">
                 <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-                  <History size={18} className="text-blue-600" /> Order List
+                  <History size={18} className="text-blue-600" /> Daily Orders
                 </h2>
                 <div className="relative w-full sm:w-64">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
@@ -486,7 +616,9 @@ export default function ReportsClient({ pastShifts }: Props) {
                       <th className="px-5 py-4 font-bold">Time</th>
                       <th className="px-5 py-4 font-bold">Type</th>
                       <th className="px-5 py-4 font-bold">Payment</th>
+                      <th className="px-5 py-4 font-bold">Items (Details)</th>
                       <th className="px-5 py-4 font-bold text-right">Amount</th>
+                      <th className="px-5 py-4 font-bold text-center">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
@@ -496,13 +628,33 @@ export default function ReportsClient({ pastShifts }: Props) {
                           {o.orderNumber || `#${o.id}`}
                           {o.status === 'refunded' && <span className="ml-2 text-[10px] text-red-600 bg-red-100 px-1.5 py-0.5 rounded-full uppercase font-bold">Refunded</span>}
                         </td>
-                        <td className="px-5 py-3">{o.createdAt ? new Date(o.createdAt).toLocaleString() : ''}</td>
+                        <td className="px-5 py-3 whitespace-nowrap">{o.createdAt ? new Date(o.createdAt).toLocaleTimeString() : ''}</td>
                         <td className="px-5 py-3">{o.orderType || 'Takeaway'}</td>
                         <td className="px-5 py-3 font-semibold">{o.paymentMethod || 'Cash'}</td>
-                        <td className="px-5 py-3 text-right font-bold text-gray-900">Rs. {parseFloat(o.totalAmount).toLocaleString()}</td>
+                        <td className="px-5 py-3">
+                          <div className="flex flex-col gap-1">
+                            {o.cartItems && o.cartItems.length > 0 ? o.cartItems.map((item: any, idx: number) => (
+                              <div key={idx} className="text-xs text-gray-600 bg-gray-100 px-2 py-1 rounded">
+                                <span className="font-bold">{item.quantity}x</span> {item.name} {item.size ? `(${item.size})` : ''}
+                              </div>
+                            )) : (
+                              <span className="text-xs text-gray-400">{o.itemsDetail || 'No details'}</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-5 py-3 text-right font-bold text-gray-900 whitespace-nowrap">Rs. {parseFloat(o.totalAmount).toLocaleString()}</td>
+                        <td className="px-5 py-3 text-center">
+                          <button
+                            onClick={() => handlePrintOrderReceipt(o)}
+                            className="text-teal-600 hover:text-teal-800 transition-colors inline-flex items-center gap-1 text-xs font-semibold bg-teal-50 px-2 py-1 rounded"
+                            title="Print Copy Bill"
+                          >
+                            <Printer size={14} /> Print
+                          </button>
+                        </td>
                       </tr>
                     )) : (
-                      <tr><td colSpan={5} className="px-5 py-8 text-center text-gray-400">No orders found.</td></tr>
+                      <tr><td colSpan={7} className="px-5 py-8 text-center text-gray-400">No orders yet.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -543,7 +695,7 @@ export default function ReportsClient({ pastShifts }: Props) {
                             </div>
                           )}
                         </td>
-                        <td className="px-5 py-3 align-top">{o.createdAt ? new Date(o.createdAt).toLocaleString() : ''}</td>
+                        <td className="px-5 py-3 align-top">{o.createdAt ? new Date(o.createdAt).toLocaleTimeString() : ''}</td>
                         <td className="px-5 py-3 align-top">{o.orderType || 'Takeaway'}</td>
                         <td className="px-5 py-3 font-semibold align-top">Rs. {parseFloat(o.totalAmount).toLocaleString()}</td>
                         <td className="px-5 py-3 text-right font-bold text-red-600 align-top">Rs. {parseFloat(o.refundAmount || o.totalAmount).toLocaleString()}</td>
@@ -568,3 +720,4 @@ export default function ReportsClient({ pastShifts }: Props) {
     </div>
   );
 }
+

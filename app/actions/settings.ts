@@ -27,6 +27,33 @@ export async function getServerConfig(): Promise<Partial<TaxConfig>> {
   return {};
 }
 
+// Fetches non-sensitive / server-only config for the public landing page (does not require session)
+export async function getPublicLandingConfig(): Promise<Partial<TaxConfig>> {
+  try {
+    const row = await db.query.posConfig.findFirst({
+      where: eq(posConfig.key, CONFIG_KEY),
+    });
+    if (row) {
+      const fullConfig = JSON.parse(row.value) as Partial<TaxConfig>;
+      return {
+        storeStatusOverride: fullConfig.storeStatusOverride,
+        autoOpenTime: fullConfig.autoOpenTime,
+        autoCloseTime: fullConfig.autoCloseTime,
+        googlePlacesApiKey: fullConfig.googlePlacesApiKey,
+        googlePlaceId: fullConfig.googlePlaceId,
+        landingActivities: fullConfig.landingActivities,
+        landingGallery: fullConfig.landingGallery,
+        landingHoursList: fullConfig.landingHoursList,
+        landingHoursBanner: fullConfig.landingHoursBanner,
+        landingHeroImage: fullConfig.landingHeroImage,
+      };
+    }
+  } catch (err) {
+    console.error('Failed to fetch public landing config:', err);
+  }
+  return {};
+}
+
 export async function saveServerConfig(data: TaxConfig) {
   const session = await getSession();
   if (!session || (session.role !== 'admin' && session.role !== 'manager')) {
@@ -46,6 +73,7 @@ export async function saveServerConfig(data: TaxConfig) {
       await db.insert(posConfig).values({ key: CONFIG_KEY, value });
     }
 
+    revalidatePath('/');
     return { success: true };
   } catch (err) {
     console.error('Failed to save server config:', err);

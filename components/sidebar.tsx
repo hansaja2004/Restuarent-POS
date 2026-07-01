@@ -1,6 +1,6 @@
 'use client'
 
-import { ChevronLeft, BarChart3, ShoppingCart, ClipboardList, Menu, Grid3x3, TrendingUp, Package, Users, Settings, LogOut } from 'lucide-react'
+import { ChevronLeft, BarChart3, ShoppingCart, ClipboardList, Menu, Grid3x3, TrendingUp, Package, Users, Settings, LogOut, Contact } from 'lucide-react'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { logout } from '@/app/actions/auth'
@@ -13,17 +13,17 @@ export default function Sidebar({ role }: { role?: string }) {
   const isManagerOrAdmin = role === 'manager' || role === 'admin'
   const isAdmin = role === 'admin'
 
-  const menuItems = [
+  const menuItems: Array<{ icon: any, label: string, badge: string | null, href: string }> = [
     { icon: BarChart3, label: 'Dashboard', badge: null, href: '/dashboard' },
     { icon: ShoppingCart, label: 'Point of Sale', badge: null, href: '/pos' },
+    { icon: Users, label: 'Customers', badge: null, href: '/customers' },
   ]
 
   if (isManagerOrAdmin) {
     menuItems.push(
-      { icon: Menu, label: 'Menu Management', badge: '8', href: '/menu' },
+      { icon: Menu, label: 'Menu Management', badge: null, href: '/menu' },
       { icon: TrendingUp, label: 'Sales Reports', badge: null, href: '/reports' },
-      { icon: Package, label: 'Inventory Reports', badge: null, href: '/inventory' },
-      { icon: Users, label: 'Employee Management', badge: null, href: '/employees' }
+      { icon: Contact, label: 'Employee Management', badge: null, href: '/employees' }
     )
   }
 

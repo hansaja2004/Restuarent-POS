@@ -88,8 +88,27 @@ export interface TaxConfig {
   receiptPhone: string;
   receiptFooter: string;
   receiptTaxRegNo: string;
-  enableServiceCharge: boolean;
-  enableSSCL: boolean;
+  enableServiceCharge_Takeaway?: boolean;
+  enableServiceCharge_DineIn?: boolean;
+  enableServiceCharge_Online?: boolean;
+  enableSSCL_Takeaway?: boolean;
+  enableSSCL_DineIn?: boolean;
+  enableSSCL_Online?: boolean;
+  enableVAT_Takeaway?: boolean;
+  enableVAT_DineIn?: boolean;
+  enableVAT_Online?: boolean;
+  storeStatusOverride?: 'auto' | 'open' | 'closed';
+  autoOpenTime?: string;
+  autoCloseTime?: string;
+  googlePlacesApiKey?: string;
+  googlePlaceId?: string;
+  landingActivities?: { title: string; description: string; image: string }[];
+  landingGallery?: { src: string; alt: string; size: 'large' | 'medium' }[];
+  landingHoursList?: { label: string; hours: string }[];
+  landingHoursBanner?: string;
+  landingHeroImage?: string;
+  enableCustomerDiscount?: boolean;
+  customerDiscountAmount?: number;
 }
 
 export const generateEscPosImage = (base64Url: string): Promise<number[]> => {
@@ -172,7 +191,12 @@ export const compileReceiptESC = (
   const lineChar = is80 ? '=' : '-';
   builder.addLine(lineChar.repeat(width));
 
-  if (isCopy) {
+  if (order.status === 'Refunded') {
+    builder.boldOn();
+    builder.addLine('*** REFUND RECEIPT ***');
+    builder.boldOff();
+    builder.addLine(lineChar.repeat(width));
+  } else if (isCopy) {
     builder.boldOn();
     builder.addLine('*** DUPLICATE COPY ***');
     builder.boldOff();
@@ -189,6 +213,9 @@ export const compileReceiptESC = (
   builder.addLine(`Order: ${order.orderNumber}`);
   builder.addLine(`Date : ${new Date(order.timestamp).toLocaleString()}`);
   builder.addLine(`Staff: ${cashierName}`);
+  if (order.customerName) {
+    builder.addLine(`Cust : ${order.customerName}`);
+  }
   builder.addLine(`Type : ${order.type} Service`);
   builder.addLine(lineChar.repeat(width));
 
@@ -248,34 +275,41 @@ export const compileReceiptESC = (
     (sum: number, item: any) => sum + item.price * item.quantity,
     0,
   );
-  const hasCharges = !order.isCustomerSelected;
-
-  builder.addLine(formatTotalLine('Subtotal: ', foodSubtotal));
 
   const applyServiceCharge = order.applyServiceCharge !== false;
+  
+  // Resolve toggles for this order type
+  const isType = (t: string) => order.type === t;
+  const typeScEnabled = isType('Dine in') ? config.enableServiceCharge_DineIn : isType('Online') ? config.enableServiceCharge_Online : config.enableServiceCharge_Takeaway;
+  const typeSsclEnabled = isType('Dine in') ? config.enableSSCL_DineIn : isType('Online') ? config.enableSSCL_Online : config.enableSSCL_Takeaway;
+  const typeVatEnabled = isType('Dine in') ? config.enableVAT_DineIn : isType('Online') ? config.enableVAT_Online : config.enableVAT_Takeaway;
+
   const serviceChargePercent =
-    applyServiceCharge && hasCharges && config.enableServiceCharge
+    applyServiceCharge && typeScEnabled
       ? order.type === 'Dine in'
         ? config.waiterServiceCharge
-        : order.type === 'Takeaway' || order.type === 'Online'
-        ? config.counterServiceCharge
-        : 0
+        : config.counterServiceCharge
       : 0;
+      
   const serviceCharge = (foodSubtotal * serviceChargePercent) / 100;
-  if (hasCharges && config.enableServiceCharge && serviceCharge > 0) {
+  if (typeScEnabled && serviceCharge > 0) {
     builder.addLine(formatTotalLine(`Service Charge (${serviceChargePercent}%): `, serviceCharge));
   }
 
   const amountForSSCL = foodSubtotal + serviceCharge;
-  const sscl = hasCharges && config.enableSSCL ? amountForSSCL * (config.ssclPercentage / 100) : 0;
-  if (hasCharges && config.enableSSCL && sscl > 0) {
+  const sscl = typeSsclEnabled ? amountForSSCL * (config.ssclPercentage / 100) : 0;
+  if (typeSsclEnabled && sscl > 0) {
     builder.addLine(formatTotalLine(`SSCL (${config.ssclPercentage}%): `, sscl));
   }
 
   const amountForVAT = amountForSSCL + sscl;
-  const vat = hasCharges ? amountForVAT * (config.vatPercentage / 100) : 0;
-  if (hasCharges) {
+  const vat = typeVatEnabled ? amountForVAT * (config.vatPercentage / 100) : 0;
+  if (typeVatEnabled && vat > 0) {
     builder.addLine(formatTotalLine(`VAT (${config.vatPercentage}%): `, vat));
+  }
+
+  if (order.discount && order.discount > 0) {
+    builder.addLine(formatTotalLine(`Customer Discount: `, -order.discount));
   }
 
   builder.addLine(lineChar.repeat(width));
@@ -290,6 +324,20 @@ export const compileReceiptESC = (
     builder.addLine(lineChar.repeat(width));
   } else if (order.paymentMethod) {
     builder.addLine(`Payment Method: ${order.paymentMethod.replace(/\|/g, ', ')}`);
+    builder.addLine(lineChar.repeat(width));
+  }
+
+  if (order.status === 'Refunded' && order.refundDetails) {
+    builder.alignLeft();
+    builder.boldOn();
+    builder.addLine('REFUND DETAILS:');
+    builder.boldOff();
+    builder.addLine(`Amount: Rs. ${order.refundDetails.amount.toFixed(2)}`);
+    builder.addLine(`Reason: ${order.refundDetails.reason}`);
+    builder.addLine(`Customer: ${order.refundDetails.customerName}`);
+    if (order.refundDetails.customerPhone) {
+      builder.addLine(`Phone: ${order.refundDetails.customerPhone}`);
+    }
     builder.addLine(lineChar.repeat(width));
   }
 
@@ -396,6 +444,98 @@ export const writeToWebSerial = async (port: any, bytes: Uint8Array): Promise<vo
   })(), 3000); // 3 second timeout
 };
 
+export const compileShortcutsESC = (config: TaxConfig): Uint8Array => {
+  const builder = new EscPosBuilder();
+  builder.initialize();
+
+  // Header
+  builder.alignCenter();
+  builder.boldOn();
+  builder.doubleSizeOn();
+  builder.addLine('POS SHORTCUTS');
+  builder.doubleSizeOff();
+  builder.boldOff();
+
+  const is80 = config.paperWidth === '80mm';
+  const width = is80 ? 48 : 32;
+  const lineChar = is80 ? '=' : '-';
+  builder.addLine(lineChar.repeat(width));
+
+  builder.alignLeft();
+  builder.addLine('F8     : Search Menu');
+  builder.addLine('F9     : Open Checkout');
+  builder.addLine('Enter  : Confirm Payment');
+  builder.addLine('1      : Full Cash');
+  builder.addLine('2      : Full Card');
+  builder.addLine('3      : Full QR');
+  builder.addLine('F4     : Clear Cart');
+  builder.addLine('Esc    : Close Modals');
+  builder.addLine('F1     : New Order Tab');
+  builder.addLine('F2     : Unpaid Tab');
+  builder.addLine('F3     : History Tab');
+  builder.addLine('S/M/L  : Select Size (in popup)');
+  builder.addLine('D/T/O  : Order Type (Dine/Take/Onl)');
+  builder.addLine(lineChar.repeat(width));
+  builder.alignCenter();
+  builder.addLine('Keep this cheat sheet handy!');
+  builder.feedAndCut();
+
+  return builder.build();
+};
+
+export const printHTMLShortcuts = (config: TaxConfig) => {
+  const w = window.open('', '_blank', 'width=350,height=500');
+  if (!w) return alert('Pop-up blocked! Allow pop-ups to print receipts.');
+
+  const is80 = config.paperWidth === '80mm';
+  const maxWidth = is80 ? '300px' : '200px';
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>POS Shortcuts</title>
+        <style>
+          body { font-family: 'Courier New', Courier, monospace; font-size: 12px; margin: 0; padding: 10px; color: #000; }
+          .receipt { width: 100%; max-width: \${maxWidth}; margin: 0 auto; }
+          .center { text-align: center; }
+          .bold { font-weight: bold; }
+          .title { font-size: 16px; margin-bottom: 5px; }
+          .line { border-bottom: 1px dashed #000; margin: 10px 0; }
+          .row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+        </style>
+      </head>
+      <body>
+        <div class="receipt">
+          <div class="center bold title">POS SHORTCUTS</div>
+          <div class="line"></div>
+          <div class="row"><span>F8</span><span>Search Menu</span></div>
+          <div class="row"><span>F9</span><span>Open Checkout</span></div>
+          <div class="row"><span>Enter</span><span>Confirm Payment</span></div>
+          <div class="row"><span>1</span><span>Full Cash</span></div>
+          <div class="row"><span>2</span><span>Full Card</span></div>
+          <div class="row"><span>3</span><span>Full QR</span></div>
+          <div class="row"><span>F4</span><span>Clear Cart</span></div>
+          <div class="row"><span>Esc</span><span>Close Modals</span></div>
+          <div class="row"><span>F1</span><span>New Order Tab</span></div>
+          <div class="row"><span>F2</span><span>Unpaid Tab</span></div>
+          <div class="row"><span>F3</span><span>History Tab</span></div>
+          <div class="row"><span>S/M/L</span><span>Select Size</span></div>
+          <div class="row"><span>D/T/O</span><span>Order Type</span></div>
+          <div class="line"></div>
+          <div class="center">Keep this cheat sheet handy!</div>
+        </div>
+        <script>
+          window.onload = function() { window.print(); window.close(); }
+        </script>
+      </body>
+    </html>
+  `;
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+};
+
 export const printHTMLReceipt = (
   order: any,
   config: TaxConfig,
@@ -413,22 +553,26 @@ export const printHTMLReceipt = (
     (sum: number, item: any) => sum + item.price * item.quantity,
     0,
   );
-  const hasCharges = !order.isCustomerSelected;
 
   const applyServiceCharge = order.applyServiceCharge !== false;
+  
+  const isType = (t: string) => order.type === t;
+  const typeScEnabled = isType('Dine in') ? config.enableServiceCharge_DineIn : isType('Online') ? config.enableServiceCharge_Online : config.enableServiceCharge_Takeaway;
+  const typeSsclEnabled = isType('Dine in') ? config.enableSSCL_DineIn : isType('Online') ? config.enableSSCL_Online : config.enableSSCL_Takeaway;
+  const typeVatEnabled = isType('Dine in') ? config.enableVAT_DineIn : isType('Online') ? config.enableVAT_Online : config.enableVAT_Takeaway;
+
   const serviceChargePercent =
-    applyServiceCharge && hasCharges && config.enableServiceCharge
+    applyServiceCharge && typeScEnabled
       ? order.type === 'Dine in'
         ? config.waiterServiceCharge
-        : order.type === 'Takeaway' || order.type === 'Online'
-        ? config.counterServiceCharge
-        : 0
+        : config.counterServiceCharge
       : 0;
+      
   const serviceCharge = (foodSubtotal * serviceChargePercent) / 100;
   const amountForSSCL = foodSubtotal + serviceCharge;
-  const sscl = hasCharges && config.enableSSCL ? amountForSSCL * (config.ssclPercentage / 100) : 0;
+  const sscl = typeSsclEnabled ? amountForSSCL * (config.ssclPercentage / 100) : 0;
   const amountForVAT = amountForSSCL + sscl;
-  const vat = hasCharges ? amountForVAT * (config.vatPercentage / 100) : 0;
+  const vat = typeVatEnabled ? amountForVAT * (config.vatPercentage / 100) : 0;
 
   let itemsHtml = '';
   order.items.forEach((item: any) => {
@@ -460,12 +604,14 @@ export const printHTMLReceipt = (
       ${config.receiptPhone ? `<div style="font-size:11px;">Tel: ${config.receiptPhone}</div>` : ''}
     </div>
     ${divider}
-    ${isCopy ? `<div style="text-align:center;font-weight:bold;font-size:13px;margin:4px 0;">*** DUPLICATE COPY ***</div>${divider}` : ''}
-    ${isUnpaid ? `<div style="text-align:center;font-weight:bold;font-size:13px;margin:4px 0;">*** UNPAID BILL ***</div>${divider}` : ''}
+    ${order.status === 'Refunded' ? `<div style="text-align:center;font-weight:bold;font-size:13px;margin:4px 0;color:red;">*** REFUND RECEIPT ***</div>${divider}` : ''}
+    ${isCopy && order.status !== 'Refunded' ? `<div style="text-align:center;font-weight:bold;font-size:13px;margin:4px 0;">*** DUPLICATE COPY ***</div>${divider}` : ''}
+    ${isUnpaid && order.status !== 'Refunded' ? `<div style="text-align:center;font-weight:bold;font-size:13px;margin:4px 0;">*** UNPAID BILL ***</div>${divider}` : ''}
     <div style="font-size:11px;margin-bottom:4px;line-height:1.3;">
       <div><b>Order:</b> ${order.orderNumber}</div>
       <div><b>Date:</b> ${new Date(order.timestamp).toLocaleString()}</div>
       <div><b>Staff:</b> ${cashierName}</div>
+      ${order.customerName ? `<div><b>Cust:</b> ${order.customerName}</div>` : ''}
       <div><b>Type:</b> ${order.type} Service</div>
     </div>
     ${divider}
@@ -478,9 +624,10 @@ export const printHTMLReceipt = (
     ${divider}
     <div style="font-size:11px;text-align:right;line-height:1.3;">
       <div>Subtotal: Rs. ${foodSubtotal.toFixed(2)}</div>
-      ${hasCharges && config.enableServiceCharge && serviceCharge > 0 ? `<div>Service Charge (${serviceChargePercent}%): Rs. ${serviceCharge.toFixed(2)}</div>` : ''}
-      ${hasCharges && config.enableSSCL && sscl > 0 ? `<div>SSCL (${config.ssclPercentage}%): Rs. ${sscl.toFixed(2)}</div>` : ''}
-      ${hasCharges ? `<div>VAT (${config.vatPercentage}%): Rs. ${vat.toFixed(2)}</div>` : ''}
+      ${typeScEnabled && serviceCharge > 0 ? `<div>Service Charge (${serviceChargePercent}%): Rs. ${serviceCharge.toFixed(2)}</div>` : ''}
+      ${typeSsclEnabled && sscl > 0 ? `<div>SSCL (${config.ssclPercentage}%): Rs. ${sscl.toFixed(2)}</div>` : ''}
+      ${typeVatEnabled && vat > 0 ? `<div>VAT (${config.vatPercentage}%): Rs. ${vat.toFixed(2)}</div>` : ''}
+      ${order.discount && order.discount > 0 ? `<div>Customer Discount: -Rs. ${order.discount.toFixed(2)}</div>` : ''}
     </div>
     ${divider}
     <div style="font-size:14px;font-weight:bold;display:flex;justify-content:space-between;">
@@ -496,6 +643,17 @@ export const printHTMLReceipt = (
         : order.paymentMethod
           ? `<div style="font-size:11px;text-align:right;"><div>Payment Method: ${order.paymentMethod.replace(/\|/g, ', ')}</div></div>${divider}`
           : ''
+    }
+    ${
+      order.status === 'Refunded' && order.refundDetails
+        ? `<div style="font-size:11px;line-height:1.3;text-align:left;">
+            <div style="font-weight:bold;margin-bottom:2px;">REFUND DETAILS:</div>
+            <div>Amount: Rs. ${order.refundDetails.amount.toFixed(2)}</div>
+            <div>Reason: ${order.refundDetails.reason}</div>
+            <div>Customer: ${order.refundDetails.customerName}</div>
+            ${order.refundDetails.customerPhone ? `<div>Phone: ${order.refundDetails.customerPhone}</div>` : ''}
+          </div>${divider}`
+        : ''
     }
     ${order.notes ? `<div style="font-size:11px;line-height:1.3;margin-bottom:4px;"><b>Notes / Instructions:</b><div style="font-style:italic;white-space:pre-wrap;margin-top:2px;">${order.notes}</div></div>${divider}` : ''}
     <div style="text-align:center;font-size:11px;margin-top:10px;line-height:1.3;">
@@ -542,6 +700,7 @@ export const compileSummaryESC = (stats: any, config: TaxConfig) => {
   builder.addLine(formatLine('  VAT:', `Rs. ${(stats.totalVAT || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`));
   builder.addLine(formatLine('  SSCL:', `Rs. ${(stats.totalSSCL || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`));
   builder.addLine(formatLine('  Service Chg:', `Rs. ${(stats.totalServiceCharge || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`));
+  builder.addLine(formatLine('  Discounts:', `Rs. ${(stats.totalDiscount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`));
   builder.addLine(lineChar.repeat(width));
   builder.addLine('ORDER TYPES:');
   builder.addLine(formatLine('  Takeaway:', stats.typeBreakdown.Takeaway.toString()));
@@ -600,7 +759,10 @@ export const printHTMLSummary = (stats: any, config: TaxConfig) => {
         <span>SSCL:</span><span>Rs. ${(stats.totalSSCL || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
       </div>
       <div style="display:flex;justify-content:space-between;">
-        <span>Service Chg:</span><span>Rs. ${(stats.totalServiceCharge || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        <span>Service Charge:</span><span>Rs. ${(stats.totalServiceCharge || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;">
+        <span>Discounts:</span><span>Rs. ${(stats.totalDiscount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
       </div>
       
       <hr style="border:1px dashed #000;margin:5px 0;" />

@@ -168,6 +168,28 @@ export default function DashboardClient({ session, orders, stats }: Props) {
     const wsRefunds = XLSX.utils.aoa_to_sheet(refundsData);
     XLSX.utils.book_append_sheet(wb, wsRefunds, 'Refund History');
 
+    // 4. Order Items Sheet
+    const orderItemsData = [
+      ['Order Number', 'Date', 'Item Name', 'Size', 'Quantity', 'Unit Price', 'Total']
+    ];
+    allHistoryOrders.forEach(o => {
+      if (o.cartItems && Array.isArray(o.cartItems)) {
+        o.cartItems.forEach((item: any) => {
+          orderItemsData.push([
+            o.orderNumber || `#${o.id}`,
+            o.createdAt ? new Date(o.createdAt).toLocaleString() : '',
+            item.name,
+            item.size || 'reg',
+            item.quantity.toString(),
+            item.price.toString(),
+            (item.price * item.quantity).toString()
+          ]);
+        });
+      }
+    });
+    const wsOrderItems = XLSX.utils.aoa_to_sheet(orderItemsData);
+    XLSX.utils.book_append_sheet(wb, wsOrderItems, 'Order Items');
+
     XLSX.writeFile(wb, `EOD_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
@@ -199,6 +221,49 @@ export default function DashboardClient({ session, orders, stats }: Props) {
         await writeToWebUSB(dev, bytes);
       } else if (config.printerType === 'webserial') {
         alert('Serial printing summary not fully supported in Dashboard. Switch to Browser print mode in Settings.');
+      }
+    } catch (err: any) {
+      alert(`Print failed: ${err.message}`);
+    }
+  };
+
+  const handlePrintOrderReceipt = async (o: any) => {
+    try {
+      const mappedOrder = {
+        orderNumber: o.orderNumber || `#${o.id}`,
+        timestamp: o.createdAt,
+        type: o.orderType || 'Takeaway',
+        total: parseFloat(o.totalAmount),
+        items: o.cartItems || [],
+        paymentMethod: o.paymentMethod || 'Cash',
+        status: o.status,
+      };
+
+      if (config.printerType === 'mock') {
+        alert('Printer is in mock mode. Receipt printed (simulated).');
+        return;
+      }
+      if (config.printerType === 'browser') {
+        const { printHTMLReceipt } = await import('@/lib/escpos');
+        printHTMLReceipt(mappedOrder, config, session.username, true);
+        return;
+      }
+      
+      const { compileReceiptESC } = await import('@/lib/escpos');
+      const bytes = compileReceiptESC(mappedOrder, config, session.username, true);
+
+      if (config.printerType === 'network') {
+        if (!config.networkIp || !config.networkPort) return alert('No network printer configured.');
+        const { printToNetworkPrinter } = await import('@/app/actions/settings');
+        await printToNetworkPrinter(config.networkIp, config.networkPort, Array.from(bytes));
+      } else if (config.printerType === 'webusb') {
+        const devices = await (navigator as any).usb.getDevices();
+        if (devices.length === 0) return alert('No USB printer paired. Go to Settings -> Hardware first.');
+        const dev = devices[0];
+        const { writeToWebUSB } = await import('@/lib/escpos');
+        await writeToWebUSB(dev, bytes);
+      } else if (config.printerType === 'webserial') {
+        alert('Serial printing not fully supported in Dashboard. Switch to Browser print mode in Settings.');
       }
     } catch (err: any) {
       alert(`Print failed: ${err.message}`);
@@ -263,7 +328,7 @@ export default function DashboardClient({ session, orders, stats }: Props) {
 
       {activeTab === 'overview' && (
         <div className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
             <div className="bg-gradient-to-br from-teal-500 to-emerald-600 rounded-2xl shadow-lg p-6 text-white relative overflow-hidden">
               <div className="relative z-10">
                 <p className="text-teal-100 font-medium text-sm flex items-center gap-2">
@@ -307,6 +372,16 @@ export default function DashboardClient({ session, orders, stats }: Props) {
               <h3 className="text-xl font-bold text-gray-900 mt-1">
                 <span className="text-sm text-gray-500 font-normal">SVC:</span> Rs. {(s.totalServiceCharge || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </h3>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 relative overflow-hidden">
+              <p className="text-gray-500 font-medium text-sm flex items-center gap-2">
+                <TicketPercent size={16} className="text-yellow-500" /> Discounts Given
+              </p>
+              <h3 className="text-3xl font-bold text-gray-900 mt-2">Rs. {(s.totalDiscount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+              <p className="text-yellow-600 text-xs mt-2 font-semibold">
+                Customer Discounts Applied
+              </p>
             </div>
           </div>
 
@@ -470,8 +545,9 @@ export default function DashboardClient({ session, orders, stats }: Props) {
                   <th className="px-5 py-4 font-bold">Time</th>
                   <th className="px-5 py-4 font-bold">Type</th>
                   <th className="px-5 py-4 font-bold">Payment</th>
-                  <th className="px-5 py-4 font-bold">Items</th>
+                  <th className="px-5 py-4 font-bold">Items (Details)</th>
                   <th className="px-5 py-4 font-bold text-right">Amount</th>
+                  <th className="px-5 py-4 font-bold text-center">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -481,14 +557,33 @@ export default function DashboardClient({ session, orders, stats }: Props) {
                       {o.orderNumber || `#${o.id}`}
                       {o.status === 'refunded' && <span className="ml-2 text-[10px] text-red-600 bg-red-100 px-1.5 py-0.5 rounded-full uppercase font-bold">Refunded</span>}
                     </td>
-                    <td className="px-5 py-3">{o.createdAt ? new Date(o.createdAt).toLocaleTimeString() : ''}</td>
+                    <td className="px-5 py-3 whitespace-nowrap">{o.createdAt ? new Date(o.createdAt).toLocaleTimeString() : ''}</td>
                     <td className="px-5 py-3">{o.orderType || 'Takeaway'}</td>
                     <td className="px-5 py-3 font-semibold">{o.paymentMethod || 'Cash'}</td>
-                    <td className="px-5 py-3">{o.items}</td>
-                    <td className="px-5 py-3 text-right font-bold text-gray-900">Rs. {parseFloat(o.totalAmount).toLocaleString()}</td>
+                    <td className="px-5 py-3">
+                      <div className="flex flex-col gap-1">
+                        {o.cartItems && o.cartItems.length > 0 ? o.cartItems.map((item: any, idx: number) => (
+                          <div key={idx} className="text-xs text-gray-600 bg-gray-100 px-2 py-1 rounded">
+                            <span className="font-bold">{item.quantity}x</span> {item.name} {item.size ? `(${item.size})` : ''}
+                          </div>
+                        )) : (
+                          <span className="text-xs text-gray-400">{o.itemsDetail || 'No details'}</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-5 py-3 text-right font-bold text-gray-900 whitespace-nowrap">Rs. {parseFloat(o.totalAmount).toLocaleString()}</td>
+                    <td className="px-5 py-3 text-center">
+                      <button
+                        onClick={() => handlePrintOrderReceipt(o)}
+                        className="text-teal-600 hover:text-teal-800 transition-colors inline-flex items-center gap-1 text-xs font-semibold bg-teal-50 px-2 py-1 rounded"
+                        title="Print Copy Bill"
+                      >
+                        <Printer size={14} /> Print
+                      </button>
+                    </td>
                   </tr>
                 )) : (
-                  <tr><td colSpan={6} className="px-5 py-8 text-center text-gray-400">No orders yet today.</td></tr>
+                  <tr><td colSpan={7} className="px-5 py-8 text-center text-gray-400">No orders yet today.</td></tr>
                 )}
               </tbody>
             </table>

@@ -1,12 +1,14 @@
 'use server';
 
 import { db } from '@/lib/db';
-import { orders, orderItems, products, posConfig } from '@/lib/db/schema';
+import { orders, orderItems, products, posConfig, customers } from '@/lib/db/schema';
 import { getSession } from '@/lib/auth';
 import { revalidatePath } from 'next/cache';
 import { count, desc, eq, and, gte } from 'drizzle-orm';
 
-// Helper to get the effective start time for the dashboard (max of midnight today or manual dashboard reset time)
+// Helper to get the start time for the dashboard.
+// We return the actual manual dashboard start time so that a session continues until manually ended.
+// This prevents past orders from becoming orphaned if the user forgets to click "End Session" at night.
 async function getDashboardStartTime() {
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
@@ -16,8 +18,7 @@ async function getDashboardStartTime() {
       where: eq(posConfig.key, 'dashboard_start_time'),
     });
     if (row && row.value) {
-      const dashboardTime = new Date(row.value);
-      return dashboardTime > startOfToday ? dashboardTime : startOfToday;
+      return new Date(row.value);
     }
   } catch (err) {
     console.error('Failed to get dashboard_start_time:', err);
@@ -55,10 +56,12 @@ export async function getOrders() {
       order: orders,
       item: orderItems,
       product: products,
+      customer: customers,
     })
     .from(orders)
     .leftJoin(orderItems, eq(orders.id, orderItems.orderId))
     .leftJoin(products, eq(orderItems.productId, products.id))
+    .leftJoin(customers, eq(orders.customerId, customers.id))
     .where(gte(orders.createdAt, startTime))
     .orderBy(desc(orders.createdAt));
 
@@ -82,6 +85,7 @@ export async function getOrders() {
         refundMethod: o.refundMethod,
         totalAmount: o.totalAmount,
         createdAt: o.createdAt,
+        customerName: row.customer ? (row.customer.name || row.customer.phone) : null,
         itemsCount: 0,
         _itemDetails: [] as string[],
         cartItems: [] as any[],
@@ -166,6 +170,7 @@ export async function createFullOrder(payload: {
   orderType?: string;
   paymentMethod?: string;
   notes?: string;
+  customerId?: number;
 }) {
   const session = await getSession();
   if (!session) return { error: 'Unauthorized' };
@@ -183,6 +188,7 @@ export async function createFullOrder(payload: {
       status: payload.status,
       orderType: payload.orderType || 'Takeaway',
       paymentMethod: payload.paymentMethod || 'Cash',
+      customerId: payload.customerId,
     }).returning();
 
     const itemsToInsert = payload.items.map(item => ({

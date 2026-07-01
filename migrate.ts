@@ -5,14 +5,21 @@ dotenv.config({ path: '.env.local' });
 async function run() {
   const sql = neon(process.env.DATABASE_URL!);
   try {
-    await sql`ALTER TABLE products ADD COLUMN is_available boolean NOT NULL DEFAULT true;`;
-    console.log('Successfully added is_available to products');
-  } catch (e) {
-    if (e.message.includes('already exists')) {
-      console.log('is_available already exists');
-    } else {
-      console.error(e);
-    }
-  }
+    await sql`CREATE TABLE IF NOT EXISTS "customers" (
+      "id" serial PRIMARY KEY NOT NULL,
+      "name" text,
+      "phone" text NOT NULL,
+      "email" text,
+      "created_at" timestamp DEFAULT now(),
+      CONSTRAINT "customers_phone_unique" UNIQUE("phone"),
+      CONSTRAINT "customers_email_unique" UNIQUE("email")
+    );`;
+    console.log('Created customers table');
+  } catch(e) { console.error(e) }
+  
+  try {
+    await sql`ALTER TABLE "orders" ADD COLUMN IF NOT EXISTS "customer_id" integer;`;
+    console.log('Added customer_id to orders');
+  } catch(e) { console.error(e) }
 }
 run();
