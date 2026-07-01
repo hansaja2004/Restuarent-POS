@@ -363,15 +363,21 @@ export default function DashboardClient({ session, orders, stats }: Props) {
               <p className="text-gray-500 font-medium text-sm flex items-center gap-2">
                 <TicketPercent size={16} className="text-purple-500" /> Taxes & Fees
               </p>
-              <h3 className="text-xl font-bold text-gray-900 mt-2">
-                <span className="text-sm text-gray-500 font-normal">VAT:</span> Rs. {(s.totalVAT || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </h3>
-              <h3 className="text-xl font-bold text-gray-900 mt-1">
-                <span className="text-sm text-gray-500 font-normal">SSCL:</span> Rs. {(s.totalSSCL || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </h3>
-              <h3 className="text-xl font-bold text-gray-900 mt-1">
-                <span className="text-sm text-gray-500 font-normal">SVC:</span> Rs. {(s.totalServiceCharge || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </h3>
+              {(config.enableVAT_Takeaway || config.enableVAT_DineIn || config.enableVAT_Online || (s.totalVAT > 0)) && (
+                <h3 className="text-xl font-bold text-gray-900 mt-2">
+                  <span className="text-sm text-gray-500 font-normal">VAT:</span> Rs. {(s.totalVAT || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </h3>
+              )}
+              {(config.enableSSCL_Takeaway || config.enableSSCL_DineIn || config.enableSSCL_Online || (s.totalSSCL > 0)) && (
+                <h3 className="text-xl font-bold text-gray-900 mt-1">
+                  <span className="text-sm text-gray-500 font-normal">SSCL:</span> Rs. {(s.totalSSCL || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </h3>
+              )}
+              {(config.enableServiceCharge_Takeaway || config.enableServiceCharge_DineIn || config.enableServiceCharge_Online || (s.totalServiceCharge > 0)) && (
+                <h3 className="text-xl font-bold text-gray-900 mt-1">
+                  <span className="text-sm text-gray-500 font-normal">SVC:</span> Rs. {(s.totalServiceCharge || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </h3>
+              )}
             </div>
 
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 relative overflow-hidden">

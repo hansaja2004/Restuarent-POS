@@ -35,7 +35,7 @@ export default function Sidebar({ role }: { role?: string }) {
           <div className="w-8 h-8 bg-teal-600 rounded-lg flex items-center justify-center text-white font-bold">
             <Package size={18} />
           </div>
-          {!collapsed && <span className="font-semibold text-gray-900">Foodcode</span>}
+          {!collapsed && <span className="font-semibold text-gray-900">RUBBER ESTATE</span>}
         </div>
         <button onClick={() => setCollapsed(!collapsed)} className="text-gray-500 hover:text-gray-700">
           <ChevronLeft size={20} className={`transition-transform ${collapsed ? 'rotate-180' : ''}`} />

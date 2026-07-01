@@ -13,7 +13,7 @@ export default function LoginPage() {
     setIsLoading(true);
     setError(null);
     const result = await login(formData);
-    
+
     if (result?.error) {
       setError(result.error);
       setIsLoading(false);
@@ -26,7 +26,7 @@ export default function LoginPage() {
     <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
       <div className="max-w-md w-full bg-white rounded-xl shadow-lg p-8">
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-gray-900">Foodcode POS</h1>
+          <h1 className="text-2xl font-bold text-gray-900">RUBBER ESTATE POS</h1>
           <p className="text-gray-500 mt-2">Sign in to your account</p>
         </div>
 
@@ -36,7 +36,7 @@ export default function LoginPage() {
               {error}
             </div>
           )}
-          
+
           <div>
             <label htmlFor="login-username" className="block text-sm font-medium text-gray-700 mb-1">Username</label>
             <input
@@ -69,7 +69,7 @@ export default function LoginPage() {
             {isLoading ? 'Signing in...' : 'Sign in'}
           </button>
         </form>
-        
+
         <div className="mt-6 text-sm text-center text-gray-500">
           <p>Default accounts (once seeded):</p>
           <p className="mt-1"><code>admin / password</code></p>

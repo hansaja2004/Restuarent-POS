@@ -127,7 +127,8 @@ export async function getHistoricalDashboardStats(startTime: Date, endTime: Date
           if (refAmt < amt) {
               orderCount++;
               totalTax += oTax;
-              const sscl = (parseFloat(o.subtotal || '0') + oServ) * (ssclPct / 100);
+              const calculatedSscl = oTax > 0 ? (parseFloat(o.subtotal || '0') + oServ) * (ssclPct / 100) : 0;
+              const sscl = Math.min(calculatedSscl, oTax); // Cannot exceed total tax collected
               totalSSCL += sscl;
               totalVAT += (oTax > 0 ? oTax - sscl : 0);
               totalServiceCharge += oServ;

@@ -11,8 +11,8 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'Foodcode - Restaurant POS System',
-  description: 'Foodcode Restaurant Point of Sale Management System',
+  title: 'RUBBER ESTATE - Restaurant POS System',
+  description: 'RUBBER ESTATE Restaurant Point of Sale Management System',
   generator: 'v0.app',
   icons: {
     icon: [
