@@ -11,9 +11,11 @@ export default async function Page() {
     redirect('/login');
   }
 
-  const categories = await getCategories();
-  const products = await getProducts();
-  const globalOrders = await getOrders();
+  const [categories, products, globalOrders] = await Promise.all([
+    getCategories(),
+    getProducts(),
+    getOrders(),
+  ]);
 
   return (
     <div className="flex h-screen bg-gray-100">

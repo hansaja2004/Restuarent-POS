@@ -14,7 +14,7 @@ import { getPublicLandingConfig } from '@/app/actions/settings'
 const plusJakarta = Plus_Jakarta_Sans({ variable: '--font-plus-jakarta', subsets: ['latin'] })
 const cormorantGaramond = Cormorant_Garamond({ variable: '--font-cormorant', weight: ['400', '600', '700'], subsets: ['latin'] })
 
-export const dynamic = 'force-dynamic'; // Ensure we get fresh menu data
+export const revalidate = 60; // Revalidate every minute to improve Vercel performance
 
 export default async function LandingPage() {
   const [categories, products, config] = await Promise.all([
