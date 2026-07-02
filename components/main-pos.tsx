@@ -228,7 +228,7 @@ export default function MainPos({
     try {
       if (config.printerType === 'mock') {
         console.log('Mock print:', order.orderNumber);
-        return;
+        return true;
       }
       if (config.printerType === 'browser') {
         if (kickDrawer) {
@@ -236,7 +236,7 @@ export default function MainPos({
           handleKickDrawer().catch(console.error);
         }
         printHTMLReceipt(order, config, session.username, isCopy, isUnpaid);
-        return;
+        return true;
       }
       let bytes = compileReceiptESC(order, config, session.username, isCopy, isUnpaid);
       if (kickDrawer) {
@@ -252,17 +252,19 @@ export default function MainPos({
           const devs = await navigator.usb.getDevices();
           if (devs.length) { dev = devs[0]; setActiveUsbDevice(dev); }
         }
-        if (!dev) return alert('No USB printer paired. Go to Settings → Hardware.');
+        if (!dev) throw new Error('No USB printer paired. Go to Settings → Hardware.');
         await writeToWebUSB(dev, bytes);
       } else if (config.printerType === 'webserial') {
-        if (!activeSerialPort) return alert('No Serial printer paired. Go to Settings → Hardware.');
+        if (!activeSerialPort) throw new Error('No Serial printer paired. Go to Settings → Hardware.');
         await writeToWebSerial(activeSerialPort, bytes);
       } else if (config.printerType === 'network') {
-        if (!config.networkIp || !config.networkPort) return alert('No network printer IP/Port configured. Go to Settings → Hardware.');
+        if (!config.networkIp || !config.networkPort) throw new Error('No network printer IP/Port configured. Go to Settings → Hardware.');
         await printToNetworkPrinter(config.networkIp, config.networkPort, Array.from(bytes));
       }
+      return true;
     } catch (err: any) {
       alert(`Print failed: ${err.message}`);
+      return false;
     }
   };
 
@@ -496,7 +498,7 @@ export default function MainPos({
   const totalGiven = cashGiven + cardGiven + qrGiven;
   const changeDue = totalGiven - finalTotal;
 
-  const handleSaveUnpaid = () => {
+  const handleSaveUnpaid = async () => {
     if (cart.length === 0) return;
     const ordNum = activeOrderNumber || generateOrderNumber();
     const order: SavedOrder = {
@@ -513,6 +515,11 @@ export default function MainPos({
       customerName: selectedCustomer ? (selectedCustomer.name || selectedCustomer.phone) : undefined,
     };
     
+    if (config.autoPrintReceipt) {
+      const printSuccess = await handlePrint(order, false, false, true);
+      if (!printSuccess) return;
+    }
+
     // Also save unpaid orders to backend if needed, or wait until paid. 
     // Currently unpaid orders are just stored locally until paid.
     // Let's keep it local for now, as it will be sent to the backend when processed from "Unpaid" tab.
@@ -520,8 +527,7 @@ export default function MainPos({
     // Replace any existing unpaid order with the same order number
     persistAndSet([order, ...savedOrders.filter(o => !(o.orderNumber === ordNum && o.status === 'Unpaid'))]);
     
-    if (config.autoPrintReceipt) handlePrint(order, false, false, true);
-    else alert('Order saved as UNPAID.');
+    if (!config.autoPrintReceipt) alert('Order saved as UNPAID.');
     
     setCart([]);
     setOrderNotes('');
@@ -570,6 +576,14 @@ export default function MainPos({
         customerName: selectedCustomer ? (selectedCustomer.name || selectedCustomer.phone) : undefined,
       };
 
+      const kickDrawer = config.autoKickDrawer && cashGiven > 0;
+      if (config.autoPrintReceipt) {
+        const printSuccess = await handlePrint(order, false, kickDrawer);
+        if (!printSuccess) return;
+      } else if (kickDrawer) {
+        handleKickDrawer();
+      }
+
       // Show loading state or just await it before persisting locally so we get the dbId
       try {
         const dbResult = await createFullOrder({
@@ -600,13 +614,6 @@ export default function MainPos({
 
       // Persist locally
       persistAndSet([order, ...savedOrders]);
-
-      const kickDrawer = config.autoKickDrawer && cashGiven > 0;
-      if (config.autoPrintReceipt) {
-        handlePrint(order, false, kickDrawer);
-      } else if (kickDrawer) {
-        handleKickDrawer();
-      }
 
       setCart([]);
       setShowCheckout(false);
@@ -696,7 +703,8 @@ export default function MainPos({
     };
 
     if (config.autoPrintReceipt) {
-      handlePrint({ ...selectedRefundOrder, status: 'Refunded', refundDetails: log }, false, false, false);
+      const printSuccess = await handlePrint({ ...selectedRefundOrder, status: 'Refunded', refundDetails: log }, false, false, false);
+      if (!printSuccess) return;
     }
 
     // Call server action to mark as refunded in DB
