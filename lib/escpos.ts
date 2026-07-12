@@ -430,7 +430,7 @@ export const writeToWebUSB = async (device: USBDevice, bytes: Uint8Array): Promi
       throw new Error('Could not find Bulk OUT endpoint on the paired printer.');
     }
 
-    await device.transferOut(endpointNumber, bytes);
+    await device.transferOut(endpointNumber, bytes as any);
   })(), 3000); // 3 second timeout for USB ops
 };
 

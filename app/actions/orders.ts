@@ -376,3 +376,25 @@ export async function getDashboardStats() {
     return null;
   }
 }
+
+export async function deleteOrder(orderId: number) {
+  const session = await getSession();
+  if (!session) return { error: 'Unauthorized' };
+
+  if (!['admin', 'manager', 'director'].includes(session.role)) {
+    return { error: 'Forbidden' };
+  }
+
+  try {
+    await db.delete(orderItems).where(eq(orderItems.orderId, orderId));
+    await db.delete(orders).where(eq(orders.id, orderId));
+
+    revalidatePath('/');
+    revalidatePath('/orders');
+    revalidatePath('/reports');
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to delete order:', error);
+    return { error: 'Failed to delete order' };
+  }
+}

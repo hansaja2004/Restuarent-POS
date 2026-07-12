@@ -31,7 +31,7 @@ import {
   writeToWebSerial,
   printHTMLReceipt,
 } from '@/lib/escpos';
-import { createFullOrder } from '@/app/actions/orders';
+import { createFullOrder, deleteOrder } from '@/app/actions/orders';
 import { toggleProductAvailability } from '@/app/actions/products';
 import { printToNetworkPrinter } from '@/app/actions/settings';
 import { getCustomerByPhone, createCustomer, searchCustomers } from '@/app/actions/customers';
@@ -517,10 +517,8 @@ export default function MainPos({
       customerName: selectedCustomer ? (selectedCustomer.name || selectedCustomer.phone) : undefined,
     };
     
-    if (config.autoPrintReceipt) {
-      const printSuccess = await handlePrint(order, false, false, true);
-      if (!printSuccess) return;
-    }
+    const printSuccess = await handlePrint(order, false, false, true);
+    if (!printSuccess) return;
 
     // Also save unpaid orders to backend if needed, or wait until paid. 
     // Currently unpaid orders are just stored locally until paid.
@@ -579,12 +577,8 @@ export default function MainPos({
       };
 
       const kickDrawer = config.autoKickDrawer && cashGiven > 0;
-      if (config.autoPrintReceipt) {
-        const printSuccess = await handlePrint(order, false, kickDrawer);
-        if (!printSuccess) return;
-      } else if (kickDrawer) {
-        handleKickDrawer();
-      }
+      const printSuccess = await handlePrint(order, false, kickDrawer);
+      if (!printSuccess) return;
 
       // Show loading state or just await it before persisting locally so we get the dbId
       try {
@@ -704,10 +698,8 @@ export default function MainPos({
       orderNumber: selectedRefundOrder.orderNumber,
     };
 
-    if (config.autoPrintReceipt) {
-      const printSuccess = await handlePrint({ ...selectedRefundOrder, status: 'Refunded', refundDetails: log }, false, false, false);
-      if (!printSuccess) return;
-    }
+    const printSuccess = await handlePrint({ ...selectedRefundOrder, status: 'Refunded', refundDetails: log }, false, false, false);
+    if (!printSuccess) return;
 
     // Call server action to mark as refunded in DB
     if (selectedRefundOrder.dbId) {
@@ -1234,6 +1226,26 @@ export default function MainPos({
                               className="flex items-center gap-1 text-xs bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold px-3 py-1.5 rounded-lg transition-all"
                             >
                               <CornerDownLeft size={12} /> Refund
+                            </button>
+                          )}
+                          {isPrivileged && (
+                            <button
+                              onClick={async () => {
+                                if (window.confirm('Are you sure you want to permanently delete this order?')) {
+                                  if (order.dbId || typeof order.id === 'number') {
+                                    const res = await deleteOrder(order.dbId || Number(order.id));
+                                    if (res?.error) {
+                                      alert(res.error);
+                                      return;
+                                    }
+                                  }
+                                  const updatedOrders = savedOrders.filter(o => o.id !== order.id);
+                                  persistAndSet(updatedOrders);
+                                }
+                              }}
+                              className="flex items-center gap-1 text-xs bg-red-100 hover:bg-red-200 text-red-700 font-bold px-3 py-1.5 rounded-lg transition-all"
+                            >
+                              <Trash2 size={12} /> Delete
                             </button>
                           )}
                         </div>
