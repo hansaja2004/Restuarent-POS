@@ -396,15 +396,19 @@ export const writeToWebUSB = async (device: USBDevice, bytes: Uint8Array): Promi
   await withTimeout((async () => {
     try {
       if (!device.opened) await device.open();
-    } catch (e) {
+    } catch (e: any) {
       console.warn('USB Open error (might already be open):', e);
+      if (!device.opened) {
+        throw new Error(`Failed to open USB device. Ensure no other app is using it, and that the WinUSB driver is installed via Zadig (Windows). Detail: ${e.message}`);
+      }
     }
     
     try {
       if (device.configuration === null) await device.selectConfiguration(1);
       await device.claimInterface(0);
-    } catch (e) {
+    } catch (e: any) {
       console.warn('USB Config/Claim error:', e);
+      throw new Error(`Failed to claim USB interface. Detail: ${e.message}`);
     }
 
     let endpointNumber = -1;

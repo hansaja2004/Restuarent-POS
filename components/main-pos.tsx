@@ -204,7 +204,8 @@ export default function MainPos({
     let usbDev = activeUsbDevice;
     if (!usbDev && 'usb' in navigator) {
       const devs = await navigator.usb.getDevices();
-      if (devs.length) { usbDev = devs[0]; setActiveUsbDevice(usbDev); }
+      const printer = devs.find(d => !d.productName?.includes('AIC8800DC')) || devs[0];
+      if (printer) { usbDev = printer; setActiveUsbDevice(usbDev); }
     }
     if (usbDev) {
       try { await writeToWebUSB(usbDev, bytes); } catch { /* ignore */ }
@@ -250,7 +251,8 @@ export default function MainPos({
         let dev = activeUsbDevice;
         if (!dev && 'usb' in navigator) {
           const devs = await navigator.usb.getDevices();
-          if (devs.length) { dev = devs[0]; setActiveUsbDevice(dev); }
+          const printer = devs.find(d => !d.productName?.includes('AIC8800DC')) || devs[0];
+          if (printer) { dev = printer; setActiveUsbDevice(dev); }
         }
         if (!dev) throw new Error('No USB printer paired. Go to Settings → Hardware.');
         await writeToWebUSB(dev, bytes);
